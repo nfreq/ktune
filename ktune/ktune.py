@@ -493,6 +493,32 @@ async def run_step_test(
             data_dict["cmd_vel"].append(vel_limit)
             await asyncio.sleep(sample_period)
 
+
+#############################
+# ENABLE/DISABLE SERVOS      #
+#############################
+async def configure_additional_servos(kos: KOS, args):
+    # Enable servos from --enable-servos
+    if args.enable_servos:
+        enabled_ids = [int(x.strip()) for x in args.enable_servos.split(',') if x.strip()]
+        for servo_id in enabled_ids:
+            print(f"Enabling servo {servo_id}")
+            await kos.actuator.configure_actuator(
+                actuator_id=servo_id,
+                torque_enabled=True
+            )
+    # Disable servos from --disable-servos
+    if args.disable_servos:
+        disabled_ids = [int(x.strip()) for x in args.disable_servos.split(',') if x.strip()]
+        for servo_id in disabled_ids:
+            print(f"Disabling servo {servo_id}")
+            await kos.actuator.configure_actuator(
+                actuator_id=servo_id,
+                torque_enabled=False
+            )
+
+
+
 #############################
 # SIMULATOR TEST #
 #############################
@@ -649,7 +675,7 @@ async def main():
     parser.add_argument("--sim_ip", default="127.0.0.1", help="Simulator KOS IP address (default=localhost)")
     parser.add_argument("--ip", default="192.168.42.1", help="Real robot KOS IP address (default=192.168.42.1)")
     parser.add_argument("--actuator-id", type=int, default=11, help="Actuator ID to test.")
-    parser.add_argument("--test", choices=["step", "sine", "chirp"], default="sine", help="Type of test to run.")
+    parser.add_argument("--test", choices=["step", "sine", "chirp"], help="Type of test to run.")
 
     # Chirp test parameters
     parser.add_argument("--chirp-amp", type=float, default=5.0, help="Chirp amplitude (degrees)")
@@ -680,10 +706,14 @@ async def main():
     parser.add_argument("--torque-off", action="store_true", help="Disable torque for test?")
 
     # Data logging
-    parser.add_argument("--no-log", action="store_true", help="Do not record/plot data.")
+    parser.add_argument("--no-log", action="store_true", help="Do not record/plot data")
     parser.add_argument("--log-duration-pad", type=float, default=2.0,
-                        help="Pad (seconds) after motion ends to keep logging.")
-    parser.add_argument("--sample-rate", type=float, default=50.0, help="Data collection rate (Hz).")
+                        help="Pad (seconds) after motion ends to keep logging")
+    parser.add_argument("--sample-rate", type=float, default=50.0, help="Data collection rate (Hz)")
+
+    # Servo Enable/Disable
+    parser.add_argument("--enable-servos", type=str, help="Comma delimited list of servo IDs to enable on the real robot (e.g., 11,12,13)")
+    parser.add_argument("--disable-servos", type=str, help="Comma delimited list of servo IDs to disable on the real robot (e.g., 31,32,33)")
 
     args = parser.parse_args()
 
@@ -707,6 +737,18 @@ async def main():
     now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     print(f"Connecting to Simulator at {args.sim_ip} and Real robot at {args.ip}...")
+    
+    # Handle servo enable/disable separately from test execution
+    if args.enable_servos is not None or args.disable_servos is not None:
+        real_kos = KOS(args.ip)
+        await configure_additional_servos(real_kos, args)
+        await real_kos.close()
+        print("Servos configured.")
+        return
+    elif not args.test:
+        parser.print_help()
+        exit(1)
+
     global_start = time.time()
     sim_queue = Queue()
     real_queue = Queue()
