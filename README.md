@@ -1,7 +1,3 @@
-# ktune
-ktune is a servo control tuning utility for matching real2sim. It utilizes Kscales kos and kos-sim.
-
-
 # ktune - Actuator Sim2Real Tuning Utility
 
 **ktune** is a command line tool for running simple actuator tests (sine, step, and chirp) on both simulation and real robot systems. It is designed to help you tune actuator parameters, collect performance data, and compare responses between simulation and hardware.
