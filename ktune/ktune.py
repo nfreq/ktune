@@ -416,8 +416,6 @@ async def run_step_test(
             state = response.states[0]
             measured_pos = state.position if state.position is not None else float('nan')
             measured_vel = state.velocity if state.velocity is not None else float('nan')
-            if not is_real:
-                print (measured_pos, measured_vel)
         else:
             measured_pos, measured_vel = float('nan'), float('nan')
         data_dict["time"].append(t_resp)
@@ -856,6 +854,9 @@ async def main():
 
     print("Test complete.")
 
+def cli():
+    """Entry point for the command line interface"""
+    asyncio.run(main())
 
 if __name__ == "__main__":
     asyncio.run(main())
