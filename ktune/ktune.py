@@ -908,7 +908,7 @@ async def main():
 
         plt.figtext(0.5, 0.02, "ktune", ha='center', va='center', fontsize=12)
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        png_path = f"plots/{args.test}_comparison_{now_str}.png"
+        png_path = f"plots/{now_str}_ID:{args.actuator_id}_{args.test}.png"
         plt.savefig(png_path)
         print(f"Saved comparison plot to {png_path}")
         plt.show()
