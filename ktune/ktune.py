@@ -115,8 +115,111 @@ def compute_step_overshoots(time_array, pos_array, steps, window_duration=1.0):
 
     return overshoots
 
+
 #############################
-# ACTUATOR TEST FUNCTIONS   #
+# ACTUATOR TEST FUNCTIONS   $
+# CHIRP                     #
+#############################
+async def run_chirp_test(kos: KOS,
+                         actuator_id: int,
+                         amplitude: float,
+                         init_freq: float,
+                         sweep_rate: float,
+                         duration: float,
+                         kp: float,
+                         kd: float,
+                         ki: float,
+                         sim_kp: float,
+                         sim_kv: float,
+                         acceleration: float,
+                         max_torque: float,
+                         torque_enabled: bool,
+                         update_rate: float,
+                         data_dict: dict,
+                         start_time: float,
+                         is_real: bool,
+                         request_state: bool = True):
+    """
+    Command a chirp waveform and log timestamps, commanded, and measured values.
+    The chirp is defined as:
+       angle = amplitude * sin(2*pi*(init_freq*t + 0.5*sweep_rate*t^2))
+       velocity = amplitude * cos(2*pi*(init_freq*t + 0.5*sweep_rate*t^2)) * 2*pi*(init_freq + sweep_rate*t)
+    """
+    # Choose gains based on whether we're on a real system or simulation.
+    if is_real:
+        used_kp, used_kd, used_ki = kp, kd, ki
+    else:
+        used_kp, used_kd, used_ki = sim_kp, sim_kv, 0
+
+    # Configure the actuator.
+    await kos.actuator.configure_actuator(
+        actuator_id=actuator_id,
+        kp=used_kp, kd=used_kd, ki=used_ki,
+        acceleration=acceleration,
+        max_torque=max_torque,
+        torque_enabled=torque_enabled
+    )
+
+    print(f"Chirp Test | Real: {is_real}, Init Freq: {init_freq} Hz, Sweep Rate: {sweep_rate} Hz/s, Amp: {amplitude}°, Duration: {duration}s")
+
+    dt = 1.0 / update_rate
+    steps = int(duration / dt)
+
+    # Ensure data_dict has the required keys.
+    data_dict.setdefault("cmd_time", [])
+    data_dict.setdefault("cmd_pos", [])
+    data_dict.setdefault("cmd_vel", [])
+    data_dict.setdefault("time", [])
+    data_dict.setdefault("position", [])
+    data_dict.setdefault("velocity", [])
+    data_dict.setdefault("resp_time", [])
+
+    next_tick = time.time()
+    for i in range(steps):
+        t = i * dt
+        # Compute phase, angle and velocity.
+        phase = 2 * math.pi * (init_freq * t + 0.5 * sweep_rate * t * t)
+        angle = amplitude * math.sin(phase)
+        vel = amplitude * math.cos(phase) * 2 * math.pi * (init_freq + sweep_rate * t)
+
+        t_send = time.time() - start_time
+        data_dict["cmd_time"].append(t_send)
+        data_dict["cmd_pos"].append(angle)
+        data_dict["cmd_vel"].append(vel)
+
+        await kos.actuator.command_actuators([
+            {'actuator_id': actuator_id, 'position': angle, 'velocity': vel}
+        ])
+
+        # Read back state if requested.
+        if request_state:
+            response = await kos.actuator.get_actuators_state([actuator_id])
+            t_resp = time.time() - start_time
+            data_dict["resp_time"].append(t_resp)
+            if response.states:
+                state = response.states[0]
+                measured_pos = state.position if state.position is not None else float('nan')
+                measured_vel = state.velocity if state.velocity is not None else float('nan')
+            else:
+                measured_pos, measured_vel = float('nan'), float('nan')
+        else:
+            t_resp = time.time() - start_time
+            data_dict["resp_time"].append(t_resp)
+            measured_pos, measured_vel = angle, vel
+
+        data_dict["time"].append(t_resp)
+        data_dict["position"].append(measured_pos)
+        data_dict["velocity"].append(measured_vel)
+
+        next_tick += dt
+        sleep_time = next_tick - time.time()
+        if sleep_time > 0:
+            await asyncio.sleep(sleep_time)
+
+
+#############################
+# ACTUATOR TEST FUNCTIONS   $
+# SINUSOID                  #
 #############################
 async def run_sine_test(kos: KOS,
                         actuator_id: int,
@@ -229,7 +332,10 @@ async def run_sine_test(kos: KOS,
 
 
 
-
+#############################
+# ACTUATOR TEST FUNCTIONS   #
+# STEP                      #
+#############################
 # Updated run_step_test signature and configuration:
 async def run_step_test(
     kos: KOS,
@@ -392,7 +498,6 @@ async def run_step_test(
 #############################
 def run_sim_test(args, global_start, out_queue):
     sim_data = {"time": [], "position": [], "velocity": [], "cmd_time": [], "cmd_pos": [], "cmd_vel": []}
-    # Run the simulator test; here we'll assume a sine test
     if args.test == "sine":
         asyncio.run(run_sine_test(
             kos=KOS(args.sim_ip),
@@ -435,14 +540,36 @@ def run_sim_test(args, global_start, out_queue):
             sample_rate=args.sample_rate,
             is_real=False
         ))
+    elif args.test == "chirp":
+        asyncio.run(run_chirp_test(
+            kos=KOS(args.sim_ip),
+            actuator_id=args.actuator_id,
+            amplitude=args.chirp_amp,
+            init_freq=args.chirp_init_freq,
+            sweep_rate=args.chirp_sweep_rate,
+            duration=args.chirp_duration,
+            kp=args.kp,
+            kd=args.kd,
+            ki=args.ki,
+            sim_kp=args.sim_kp,
+            sim_kv=args.sim_kv,
+            acceleration=args.acceleration,
+            max_torque=args.max_torque,
+            torque_enabled=(not args.torque_off),
+            update_rate=50.0,
+            data_dict=sim_data,
+            start_time=global_start,
+            is_real=False,
+            request_state=True
+        ))
     out_queue.put(sim_data)
+
 
 #############################
 # REAL ROBOT TEST #
 #############################
 def run_real_test(args, global_start, out_queue):
     real_data = {"time": [], "position": [], "velocity": [], "cmd_time": [], "cmd_pos": [], "cmd_vel": []}
-    # Run the real robot test; here we'll assume a sine test
     if args.test == "sine":
         asyncio.run(run_sine_test(
             kos=KOS(args.ip),
@@ -485,6 +612,28 @@ def run_real_test(args, global_start, out_queue):
             sample_rate=args.sample_rate,
             is_real=True
         ))
+    elif args.test == "chirp":
+        asyncio.run(run_chirp_test(
+            kos=KOS(args.ip),
+            actuator_id=args.actuator_id,
+            amplitude=args.chirp_amp,
+            init_freq=args.chirp_init_freq,
+            sweep_rate=args.chirp_sweep_rate,
+            duration=args.chirp_duration,
+            kp=args.kp,
+            kd=args.kd,
+            ki=args.ki,
+            sim_kp=args.sim_kp,
+            sim_kv=args.sim_kv,
+            acceleration=args.acceleration,
+            max_torque=args.max_torque,
+            torque_enabled=(not args.torque_off),
+            update_rate=50.0,
+            data_dict=real_data,
+            start_time=global_start,
+            is_real=True,
+            request_state=True
+        ))
     out_queue.put(real_data)
 
 
@@ -500,7 +649,13 @@ async def main():
     parser.add_argument("--sim_ip", default="127.0.0.1", help="Simulator KOS IP address (default=localhost)")
     parser.add_argument("--ip", default="192.168.42.1", help="Real robot KOS IP address (default=192.168.42.1)")
     parser.add_argument("--actuator-id", type=int, default=11, help="Actuator ID to test.")
-    parser.add_argument("--test", choices=["sine", "step"], default="sine", help="Type of test to run.")
+    parser.add_argument("--test", choices=["step", "sine", "chirp"], default="sine", help="Type of test to run.")
+
+    # Chirp test parameters
+    parser.add_argument("--chirp-amp", type=float, default=5.0, help="Chirp amplitude (degrees)")
+    parser.add_argument("--chirp-init-freq", type=float, default=1.0, help="Chirp initial frequency (Hz)")
+    parser.add_argument("--chirp-sweep-rate", type=float, default=0.5, help="Chirp sweep rate (Hz per second)")
+    parser.add_argument("--chirp-duration", type=float, default=5.0, help="Chirp test duration (seconds)")
 
     # Sine test parameters
     parser.add_argument("--freq", type=float, default=1.0, help="Sine frequency (Hz)")
@@ -577,7 +732,13 @@ async def main():
         fig, axs = plt.subplots(2, 2, figsize=(14, 8), sharex=True)
 
         # Build a title string based on the test type.
-        if args.test == "sine":
+        if args.test == "chirp":
+            title_str = (f"{args.name} -- Chirp Test -- Actuator {args.actuator_id}\n"
+                        f"Init Freq: {args.chirp_init_freq} Hz, Sweep Rate: {args.chirp_sweep_rate} Hz/s, "
+                        f"Amp: {args.chirp_amp}°, Duration: {args.chirp_duration}s\n"
+                        f"Sim Kp: {args.sim_kp} Kv: {args.sim_kv} | Real Kp: {args.kp} Kd: {args.kd} Ki: {args.ki}\n"
+                        f"Acceleration: {args.acceleration:.0f} deg/s²")
+        elif args.test == "sine":
             title_str = (f"{args.name} -- Sine Wave Test -- Actuator {args.actuator_id}\n"
                         f"Freq: {args.freq} Hz, Amp: {args.amp}°, Cmd: 50Hz, Data: {args.sample_rate} Hz\n"
                         f"Sim Kp: {args.sim_kp} Kv: {args.sim_kv} | Real Kp: {args.kp} Kd: {args.kd} Ki: {args.ki}\n"
