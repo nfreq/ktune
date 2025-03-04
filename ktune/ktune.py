@@ -780,7 +780,7 @@ async def main():
 
     if sim_rate < args.sample_rate or real_rate < args.sample_rate:
         print(f"\nERROR: Requested sampling rate ({args.sample_rate} Hz) exceeds maximum achievable rates")
-        print("Please reduce the sampling rate and try again")
+        print("Try re-running kos-sim --no-render or reduce the sampling rate and try again")
         exit(1)
     
 
