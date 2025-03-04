@@ -715,7 +715,7 @@ async def main():
     parser.add_argument("--no-log", action="store_true", help="Do not record/plot data")
     parser.add_argument("--log-duration-pad", type=float, default=2.0,
                         help="Pad (seconds) after motion ends to keep logging")
-    parser.add_argument("--sample-rate", type=float, default=50.0, help="Data collection rate (Hz)")
+    parser.add_argument("--sample-rate", type=float, default=100.0, help="Data collection rate (Hz)")
 
     # Servo Enable/Disable
     parser.add_argument("--enable-servos", type=str, help="Comma delimited list of servo IDs to enable on the real robot (e.g., 11,12,13)")
@@ -805,18 +805,44 @@ async def main():
         os.makedirs("plots", exist_ok=True)
         print(f"Saving plot data to plots/{args.test}_test_{now_str}.png")
 
+        JOINT_NAMES = {
+            11: "Left Shoulder Yaw",
+            12: "Left Shoulder Pitch", 
+            13: "Left Elbow Yaw",
+            14: "Left Gripper",
+            21: "Right Shoulder Yaw",
+            22: "Right Shoulder Pitch",
+            23: "Right Elbow Yaw", 
+            24: "Right Gripper",
+            31: "Left Hip Pitch",
+            32: "Left Hip Yaw",
+            33: "Left Hip Roll",
+            34: "Left Knee Pitch",
+            35: "Left Ankle Pitch",
+            41: "Right Hip Pitch",
+            42: "Right Hip Yaw",
+            43: "Right Hip Roll",
+            44: "Right Knee Pitch",
+            45: "Right Ankle Pitch"
+        }
 
         fig, axs = plt.subplots(2, 2, figsize=(14, 8), sharex=True)
 
+        test_joint = JOINT_NAMES.get(args.actuator_id, "")
+
+        #with open(f"plots/sine_test_sim_{timestamp}.json", "w") as f:
+        #    json.dump(sim_data, f)
+        # with open(f"plots/sine_test_real_{timestamp}.json", "w") as f:
+        #     json.dump(real_data, f)
         # Build a title string based on the test type.
         if args.test == "chirp":
-            title_str = (f"{args.name} -- Chirp Test -- Actuator {args.actuator_id}\n"
+            title_str = (f"{args.name} -- Chirp Test -- ID: {args.actuator_id} {test_joint}\n"
                         f"Init Freq: {args.chirp_init_freq} Hz, Sweep Rate: {args.chirp_sweep_rate} Hz/s, "
                         f"Amp: {args.chirp_amp}°, Duration: {args.chirp_duration}s\n"
                         f"Sim Kp: {args.sim_kp} Kv: {args.sim_kv} | Real Kp: {args.kp} Kd: {args.kd} Ki: {args.ki}\n"
                         f"Acceleration: {args.acceleration:.0f} deg/s²")
         elif args.test == "sine":
-            title_str = (f"{args.name} -- Sine Wave Test -- Actuator {args.actuator_id}\n"
+            title_str = (f"{args.name} -- Sine Wave Test -- ID: {args.actuator_id} {test_joint}\n"
                         f"Freq: {args.freq} Hz, Amp: {args.amp}°, Cmd: 50Hz, Data: {args.sample_rate} Hz\n"
                         f"Sim Kp: {args.sim_kp} Kv: {args.sim_kv} | Real Kp: {args.kp} Kd: {args.kd} Ki: {args.ki}\n"
                         f"Acceleration: {args.acceleration:.0f} deg/s²")
@@ -836,7 +862,7 @@ async def main():
             max_overshoot_real = max(overshoots_real) if len(overshoots_real) > 0 else 0.0
 
             title_str = (
-                f"{args.name} -- Step Test -- Actuator {args.actuator_id}\n"
+                f"{args.name} -- Step Test -- ID: {args.actuator_id} {test_joint}\n"
                 f"Step Size: {args.step_size}°, Hold: {args.step_hold_time}s, Count: {args.step_count}\n"
                 f"Sim Kp: {args.sim_kp} Kv: {args.sim_kv} | Real Kp: {args.kp} Kd: {args.kd} Ki: {args.ki}\n"
                 f"Overshoot - Sim: {max_overshoot_sim:.1f}%  Real: {max_overshoot_real:.1f}%\n"
@@ -847,16 +873,16 @@ async def main():
         fig.suptitle(title_str, fontsize=16)
 
         # Simulator subplots (left column)
-        axs[0, 0].plot(sim_data["cmd_time"], sim_data["cmd_pos"], '--', color='black', linewidth=1.5, label='Sim Command Pos')
-        axs[0, 0].plot(sim_data["time"], sim_data["position"], 'o-', color='blue', markersize=2, label='Sim Actual Pos')
+        axs[0, 0].plot(sim_data["cmd_time"], sim_data["cmd_pos"], '--', color='black', linewidth=1, label='Sim Command Pos')
+        axs[0, 0].plot(sim_data["time"], sim_data["position"], 'o-', color='blue', markersize=0.01, label='Sim Actual Pos')
         axs[0, 0].set_title("Sim - Position")
         axs[0, 0].set_ylabel("Position (deg)")
         axs[0, 0].legend()
         axs[0, 0].grid(True)
 
         if args.test == "sine":
-            axs[1, 0].plot(sim_data["cmd_time"], sim_data["cmd_vel"], '--', color='black', linewidth=1.5, label='Sim Command Vel')
-        axs[1, 0].plot(sim_data["time"], sim_data["velocity"], 'o-', color='blue', markersize=2, label='Sim Actual Vel')
+            axs[1, 0].plot(sim_data["cmd_time"], sim_data["cmd_vel"], '--', color='black', linewidth=1, label='Sim Command Vel')
+        axs[1, 0].plot(sim_data["time"], sim_data["velocity"], 'o-', color='blue', markersize=0.01, label='Sim Actual Vel')
         axs[1, 0].set_title("Sim - Velocity")
         axs[1, 0].set_xlabel("Time (s)")
         axs[1, 0].set_ylabel("Velocity (deg/s)")
@@ -864,16 +890,16 @@ async def main():
         axs[1, 0].grid(True)
 
         # Real Robot subplots (right column)
-        axs[0, 1].plot(real_data["cmd_time"], real_data["cmd_pos"], '--', color='black', linewidth=1.5, label='Real Command Pos')
-        axs[0, 1].plot(real_data["time"], real_data["position"], 's-', color='red', markersize=2, label='Real Actual Pos')
+        axs[0, 1].plot(real_data["cmd_time"], real_data["cmd_pos"], '--', color='black', linewidth=1, label='Real Command Pos')
+        axs[0, 1].plot(real_data["time"], real_data["position"], 's-', color='red', markersize=0.01, linewidth=1, label='Real Actual Pos')
         axs[0, 1].set_title("Real - Position")
         axs[0, 1].set_ylabel("Position (deg)")
         axs[0, 1].legend()
         axs[0, 1].grid(True)
 
         if args.test == "sine":
-            axs[1, 1].plot(real_data["cmd_time"], real_data["cmd_vel"], '--', color='black', linewidth=1.5, label='Real Command Vel')
-        axs[1, 1].plot(real_data["time"], real_data["velocity"], 's-', color='red', markersize=2, label='Real Actual Vel')
+            axs[1, 1].plot(real_data["cmd_time"], real_data["cmd_vel"], '--', color='black', linewidth=1, label='Real Command Vel')
+        axs[1, 1].plot(real_data["time"], real_data["velocity"], 's-', color='red', markersize=0.01, linewidth=1,label='Real Actual Vel')
         axs[1, 1].set_title("Real - Velocity")
         axs[1, 1].set_xlabel("Time (s)")
         axs[1, 1].set_ylabel("Velocity (deg/s)")
