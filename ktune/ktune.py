@@ -21,9 +21,17 @@ import os
 import numpy as np
 from datetime import datetime
 import matplotlib.pyplot as plt
-
+import logging
 from pykos import KOS
 
+os.environ["PYTHON_IMK_OVERRIDE"] = "1"
+# Suppress gRPC fork warnings
+os.environ["GRPC_ENABLE_FORK_SUPPORT"] = "false"
+# Suppress matplotlib/IMK logging
+logging.getLogger('matplotlib').setLevel(logging.WARNING)
+os.environ["PYTHONWARNINGS"] = "ignore"
+
+logging.getLogger().setLevel(logging.ERROR)
 
 #######################
 # DATA COLLECTION     #
@@ -734,18 +742,47 @@ async def main():
     }
     now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    print(f"Connecting to Simulator at {args.sim_ip} and Real robot at {args.ip}...")
-    
     # Handle servo enable/disable separately from test execution
     if args.enable_servos is not None or args.disable_servos is not None:
         real_kos = KOS(args.ip)
         await configure_additional_servos(real_kos, args)
         await real_kos.close()
-        print("Servos configured.")
+        print("Servos configured")
         return
     elif not args.test:
         parser.print_help()
         exit(1)
+
+    print(f"Connecting to Simulator at {args.sim_ip} and Real robot at {args.ip}...")
+
+    print("Testing KOS-SIM connection performance...")
+    sim_kos = KOS(args.sim_ip)
+    sim_start = time.time()
+    for _ in range(100):  # Test 100 samples
+        await sim_kos.actuator.command_actuators([{'actuator_id': args.actuator_id, 'position': 0.0}])
+    sim_end = time.time()
+    sim_rate = 100 / (sim_end - sim_start)
+    await sim_kos.close()
+
+    print("Testing KOS-REAL connection performance...")
+    real_kos = KOS(args.ip)
+    real_start = time.time() 
+    for _ in range(100):  # Test 100 samples
+        await real_kos.actuator.command_actuators([{'actuator_id': args.actuator_id, 'position': 0.0}])
+    real_end = time.time()
+    real_rate = 100 / (real_end - real_start)
+    await real_kos.close()
+
+    await asyncio.sleep(1.0)
+    print(f"Max KOS-SIM sampling rate: {sim_rate:.1f} Hz")
+    print(f"Max KOS-REAL sampling rate: {real_rate:.1f} Hz")
+    print(f"Required sampling rate: {args.sample_rate} Hz")
+
+    if sim_rate < args.sample_rate or real_rate < args.sample_rate:
+        print(f"\nERROR: Requested sampling rate ({args.sample_rate} Hz) exceeds maximum achievable rates")
+        print("Please reduce the sampling rate and try again")
+        exit(1)
+    
 
     global_start = time.time()
     sim_queue = Queue()
