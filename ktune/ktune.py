@@ -713,9 +713,6 @@ async def main():
     print("Plotting data...")
         # Plotting both simulator and real data on the same plots.
     if not args.no_log:
-        os.makedirs("plots", exist_ok=True)
-        print(f"Saving plot data to plots/{args.test}_test_{now_str}.png")
-
         JOINT_NAMES = {
             11: "Left Shoulder Roll",
             12: "Left Shoulder Pitch", 
@@ -737,27 +734,55 @@ async def main():
             45: "Right Ankle Pitch"
         }
 
-        fig, axs = plt.subplots(2, 2, figsize=(14, 8), sharex=True)
+        os.makedirs("plots", exist_ok=True)
+        os.makedirs("raw_data", exist_ok=True)
+        
+        # Get joint name and create sanitized version for directory name
+        joint_name = JOINT_NAMES.get(args.actuator_id, f"id_{args.actuator_id}")
+        dir_name = joint_name.lower().replace(" ", "_")
+
+         # Create subdirectories
+        plot_dir = os.path.join("plots", dir_name)
+        data_dir = os.path.join("raw_data", dir_name)
+        os.makedirs(plot_dir, exist_ok=True)
+        os.makedirs(data_dir, exist_ok=True)
 
         test_joint = JOINT_NAMES.get(args.actuator_id, "")
 
-
-        print("Real data keys:", list(real_data.keys()))
-
-        #with open(f"plots/sine_test_sim_{timestamp}.json", "w") as f:
-        #    json.dump(sim_data, f)
-        #with open(f"plots/sine_test_sim_{timestamp}.json", "w") as f:
-        #    json.dump(sim_data, f)
-        # with open(f"plots/sine_test_real_{timestamp}.json", "w") as f:
-        #     json.dump(real_data, f)
+        # Build header for JSON file.
+        header = {
+            "test_type": args.test,
+            "actuator_id": args.actuator_id,
+            "joint_name": test_joint,
+            "timestamp": now_str,
+            "robot_name": args.name,
+            "gains": {
+                "sim": {"kp": args.sim_kp, "kv": args.sim_kv},
+                "real": {"kp": args.kp, "kd": args.kd, "ki": args.ki}
+            },
+            "acceleration": args.acceleration
+        }
         # Build a title string based on the test type.
         if args.test == "chirp":
+            header.update({
+                "initial_frequency": args.chirp_init_freq,
+                "sweep_rate": args.chirp_sweep_rate,
+                "amplitude": args.chirp_amp,
+                "duration": args.chirp_duration
+            })
             title_str = (f"{args.name} -- Chirp Test -- ID: {args.actuator_id} {test_joint}\n"
                         f"Init Freq: {args.chirp_init_freq} Hz, Sweep Rate: {args.chirp_sweep_rate} Hz/s, "
                         f"Amp: {args.chirp_amp}°, Duration: {args.chirp_duration}s\n"
                         f"Sim Kp: {args.sim_kp} Kv: {args.sim_kv} | Real Kp: {args.kp} Kd: {args.kd} Ki: {args.ki}\n"
                         f"Acceleration: {args.acceleration:.0f} deg/s²")
         elif args.test == "sine":
+            header.update({
+                "frequency": args.freq,
+                "amplitude": args.amp,
+                "duration": args.duration,
+                "command_rate": 50,  # Hz
+                "sample_rate": args.sample_rate
+            })
             title_str = (f"{args.name} -- Sine Wave Test -- ID: {args.actuator_id} {test_joint}\n"
                         f"Freq: {args.freq} Hz, Amp: {args.amp}°, Cmd: 50Hz, Data: {args.sample_rate} Hz\n"
                         f"Sim Kp: {args.sim_kp} Kv: {args.sim_kv} | Real Kp: {args.kp} Kd: {args.kd} Ki: {args.ki}\n"
@@ -777,6 +802,16 @@ async def main():
             max_overshoot_sim = max(overshoots_sim) if len(overshoots_sim) > 0 else 0.0
             max_overshoot_real = max(overshoots_real) if len(overshoots_real) > 0 else 0.0
 
+            header.update({
+                "step_size": args.step_size,
+                "step_hold_time": args.step_hold_time,
+                "step_count": args.step_count,
+                "velocity_limit": vel,
+                "max_overshoot": {
+                    "sim": max(overshoots_sim) if overshoots_sim else 0.0,
+                    "real": max(overshoots_real) if overshoots_real else 0.0
+                }
+            })
             title_str = (
                 f"{args.name} -- Step Test -- ID: {args.actuator_id} {test_joint}\n"
                 f"Step Size: {args.step_size}°, Hold: {args.step_hold_time}s, Count: {args.step_count}\n"
@@ -786,9 +821,27 @@ async def main():
             )
         else:
             title_str = f"{args.test.capitalize()} Test - Actuator {args.actuator_id}"
-        fig.suptitle(title_str, fontsize=16)
 
-        # Simulator subplots (left column)
+        # Save raw data to JSON files.
+        sim_output = {
+            "header": header,
+            "data": sim_data
+        }
+        real_output = {
+            "header": header,
+            "data": real_data
+        }
+        json_base_path = os.path.join(data_dir, f"{now_str}_{args.test}")
+        with open(f"{json_base_path}_sim.json", "w") as f:
+            json.dump(sim_output, f, indent=2)
+        with open(f"{json_base_path}_real.json", "w") as f:
+            json.dump(real_output, f, indent=2)
+        print(f"Saved raw data to {json_base_path}_sim.json and {json_base_path}_real.json")
+
+
+        # Plotting both simulator and real data on the same plots.
+        fig, axs = plt.subplots(2, 2, figsize=(14, 8), sharex=True)
+        fig.suptitle(title_str, fontsize=16)
         axs[0, 0].plot(sim_data["cmd_time"], sim_data["cmd_pos"], '--', color='black', linewidth=1, label='Sim Command Pos')
         axs[0, 0].plot(sim_data["time"], sim_data["position"], 'o-', color='blue', markersize=2, label='Sim Actual Pos')
         axs[0, 0].set_title("Sim - Position")
@@ -824,9 +877,9 @@ async def main():
 
         plt.figtext(0.5, 0.02, "ktune", ha='center', va='center', fontsize=12)
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-        png_path = f"plots/{now_str}_ID:{args.actuator_id}_{args.test}.png"
+        png_path = os.path.join(plot_dir, f"{now_str}_{args.test}.png")
         plt.savefig(png_path)
-        print(f"Saved comparison plot to {png_path}")
+        print(f"Saving plot data to {plot_dir}/{args.test}_test_{now_str}.png")
         plt.show()
         plt.close()
 
