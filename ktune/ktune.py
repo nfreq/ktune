@@ -157,7 +157,6 @@ async def run_chirp_test(kos: KOS,
 
     dt = 1.0 / update_rate
     steps = int(duration / dt)
-
     next_tick = time.time()
     for i in range(steps):
         t = i * dt
@@ -243,10 +242,7 @@ async def run_sine_test(kos: KOS,
 
     dt = 1.0 / update_rate
     steps = int(duration / dt)
-    
-    
     next_tick = time.time()
-    
     for i in range(steps):
         t = i * dt
         angle = amplitude * math.sin(2.0 * math.pi * freq * t)
@@ -312,9 +308,6 @@ async def run_step_test(
         used_kp = sim_kp
         used_kd = sim_kv
         used_ki = ki
-
-    if start_time is None:
-        start_time = time.time()
         
     # Configure the actuator
     await kos.actuator.configure_actuator(
@@ -325,87 +318,59 @@ async def run_step_test(
         torque_enabled=torque_enabled
     )
     sample_period = 1.0 / sample_rate
+    next_sample_time = time.time()
+
+    async def sample_state(current_cmd_pos, current_cmd_vel):
+        nonlocal next_sample_time
+        try:
+            response = await kos.actuator.get_actuators_state([actuator_id])
+            t_resp = time.time() - start_time
+            log_actuator_state(response=response, data_dict=data_dict)
+            data_dict["time"].append(t_resp)
+            data_dict["cmd_time"].append(t_resp)  # Record command at each sample
+            data_dict["cmd_pos"].append(current_cmd_pos)
+            data_dict["cmd_vel"].append(current_cmd_vel)
+            
+            next_sample_time += sample_period
+            sleep_time = next_sample_time - time.time()
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
+        except Exception as e:
+            print(f"Error sampling state: {e}")
+
 
     # Initial hold at 0°.
-    t_send = time.time() - start_time
-    data_dict["cmd_time"].append(t_send)
-    data_dict["cmd_pos"].append(0.0)
-    data_dict["cmd_vel"].append(vel_limit)
-    data_dict["time"].append(t_send)
-    data_dict["position"].append(float('nan'))
-    data_dict["velocity"].append(float('nan'))
-    data_dict["torque"].append(float('nan'))
-    data_dict["temperature"].append(float('nan'))
-    data_dict["voltage"].append(float('nan'))
-    data_dict["current"].append(float('nan'))
-
     await kos.actuator.command_actuators([
         {'actuator_id': actuator_id, 'position': 0.0}
     ])
 
-    # Continuously sample during the initial hold.
     end_hold = time.time() + step_hold_time
     while time.time() < end_hold:
-        response = await kos.actuator.get_actuators_state([actuator_id])
-        t_resp = time.time() - start_time
-        log_actuator_state(response=response,data_dict=data_dict)
-        data_dict["time"].append(t_resp)
-        data_dict["cmd_time"].append(t_resp)
-        data_dict["cmd_pos"].append(0.0)
-        data_dict["cmd_vel"].append(vel_limit)
-        await asyncio.sleep(sample_period)
+        await sample_state(current_cmd_pos=0.0, current_cmd_vel=vel_limit)
     
-    # Perform the step test.
     for _ in range(step_count):
-        # STEP UP
-        t_send = time.time() - start_time
-        response = await kos.actuator.get_actuators_state([actuator_id])
-        log_actuator_state(response=response,data_dict=data_dict)
-        data_dict["time"].append(t_send)
-        data_dict["cmd_time"].append(t_send)
-        data_dict["cmd_pos"].append(step_size)
-        data_dict["cmd_vel"].append(vel_limit)
-        
+        # STEP UP        
         await kos.actuator.command_actuators([
             {'actuator_id': actuator_id, 'position': step_size, 'velocity': vel_limit}
         ])
-
-        # Sample continuously during the hold period.
+        await kos.actuator.command_actuators([
+            {'actuator_id': actuator_id, 'position': step_size, 'velocity': vel_limit}
+        ])
         end_hold = time.time() + step_hold_time
         while time.time() < end_hold:
-            response = await kos.actuator.get_actuators_state([actuator_id])
-            t_resp = time.time() - start_time
-            log_actuator_state(response=response,data_dict=data_dict)
-            data_dict["time"].append(t_resp)
-            data_dict["cmd_time"].append(t_resp)
-            data_dict["cmd_pos"].append(step_size)
-            data_dict["cmd_vel"].append(vel_limit)
-            await asyncio.sleep(sample_period)
+            await sample_state(current_cmd_pos=step_size, current_cmd_vel=vel_limit)
     
         # STEP DOWN
-        t_send = time.time() - start_time
         await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': 0.0, 'velocity': vel_limit}
+            {'actuator_id': actuator_id, 'position': 0, 'velocity': vel_limit}
         ])
-        response = await kos.actuator.get_actuators_state([actuator_id])
-        t_resp = time.time() - start_time
-        log_actuator_state(response=response,data_dict=data_dict)
-        data_dict["cmd_time"].append(t_send)
-        data_dict["cmd_pos"].append(0.0)
-        data_dict["cmd_vel"].append(vel_limit)
-        data_dict["time"].append(t_resp)
-        
-        # Sample continuously during the hold period.
+        await kos.actuator.command_actuators([
+            {'actuator_id': actuator_id, 'position': 0, 'velocity': vel_limit}
+        ])
+
         end_hold = time.time() + step_hold_time
         while time.time() < end_hold:
-            response = await kos.actuator.get_actuators_state([actuator_id])
-            t_resp = time.time() - start_time
-            log_actuator_state(response=response,data_dict=data_dict)
-            data_dict["time"].append(t_resp)
-            data_dict["cmd_time"].append(t_resp)
-            data_dict["cmd_pos"].append(0.0)
-            data_dict["cmd_vel"].append(vel_limit)
-            await asyncio.sleep(sample_period)
+            await sample_state(current_cmd_pos=0, current_cmd_vel=vel_limit)
 
 
 #############################
@@ -702,13 +667,13 @@ async def main():
     sim_proc.start()
     real_proc.start()
 
-    sim_proc.join()
-    real_proc.join()
-
     print("Waiting for data from simulator and real robot...")
 
     sim_data = sim_queue.get()
     real_data = real_queue.get()
+
+    sim_proc.join(timeout=5)
+    real_proc.join(timeout=5)
 
     print("Plotting data...")
         # Plotting both simulator and real data on the same plots.
@@ -736,7 +701,7 @@ async def main():
 
         os.makedirs("plots", exist_ok=True)
         os.makedirs("raw_data", exist_ok=True)
-        
+
         # Get joint name and create sanitized version for directory name
         joint_name = JOINT_NAMES.get(args.actuator_id, f"id_{args.actuator_id}")
         dir_name = joint_name.lower().replace(" ", "_")
