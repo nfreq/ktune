@@ -33,36 +33,22 @@ os.environ["PYTHONWARNINGS"] = "ignore"
 
 logging.getLogger().setLevel(logging.ERROR)
 
-#######################
-# DATA COLLECTION     #
-#######################
-async def collect_data(kos: KOS, actuator_id: int, data_dict: dict,
-                       stop_time: float, sample_rate=100.0,
-                       test_type="sine", freq=1.0, amp=5.0, offset=0.0,
-                       start_time: float = None):
-    dt = 1.0 / sample_rate
-    # Use provided start_time (global) so that all data uses the same time reference.
-    if start_time is None:
-        start_time = time.time()
-    next_sample = start_time
-
-    while True:
-        now = time.time()
-        if now > stop_time:
-            break
-
-        response = await kos.actuator.get_actuators_state([actuator_id])
-        state_list = response.states
-        if state_list:
-            state = state_list[0]
-            elapsed = now - start_time
-            data_dict["time"].append(elapsed)
-            data_dict["position"].append(state.position if state.position is not None else float('nan'))
-            data_dict["velocity"].append(state.velocity if state.velocity is not None else float('nan'))
-        next_sample += dt
-        sleep_time = next_sample - time.time()
-        if sleep_time > 0:
-            await asyncio.sleep(sleep_time)
+############################
+# ACTUATOR STATE LOGGING   #
+############################
+def log_actuator_state(response,data_dict):
+    if response.states:
+        state = response.states[0]
+        if state.position is not None:
+            data_dict["position"].append(state.position)
+        if state.velocity is not None:
+            data_dict["velocity"].append(state.velocity)
+        if state.torque is not None:
+            data_dict["torque"].append(state.torque)
+        if state.voltage is not None:
+            data_dict["voltage"].append(state.voltage)
+        if state.current is not None:
+            data_dict["current"].append(state.current)
 
 
 #############################
@@ -145,8 +131,7 @@ async def run_chirp_test(kos: KOS,
                          update_rate: float,
                          data_dict: dict,
                          start_time: float,
-                         is_real: bool,
-                         request_state: bool = True):
+                         is_real: bool):
     """
     Command a chirp waveform and log timestamps, commanded, and measured values.
     The chirp is defined as:
@@ -173,15 +158,6 @@ async def run_chirp_test(kos: KOS,
     dt = 1.0 / update_rate
     steps = int(duration / dt)
 
-    # Ensure data_dict has the required keys.
-    data_dict.setdefault("cmd_time", [])
-    data_dict.setdefault("cmd_pos", [])
-    data_dict.setdefault("cmd_vel", [])
-    data_dict.setdefault("time", [])
-    data_dict.setdefault("position", [])
-    data_dict.setdefault("velocity", [])
-    data_dict.setdefault("resp_time", [])
-
     next_tick = time.time()
     for i in range(steps):
         t = i * dt
@@ -199,25 +175,10 @@ async def run_chirp_test(kos: KOS,
             {'actuator_id': actuator_id, 'position': angle, 'velocity': vel}
         ])
 
-        # Read back state if requested.
-        if request_state:
-            response = await kos.actuator.get_actuators_state([actuator_id])
-            t_resp = time.time() - start_time
-            data_dict["resp_time"].append(t_resp)
-            if response.states:
-                state = response.states[0]
-                measured_pos = state.position if state.position is not None else float('nan')
-                measured_vel = state.velocity if state.velocity is not None else float('nan')
-            else:
-                measured_pos, measured_vel = float('nan'), float('nan')
-        else:
-            t_resp = time.time() - start_time
-            data_dict["resp_time"].append(t_resp)
-            measured_pos, measured_vel = angle, vel
-
+        response = await kos.actuator.get_actuators_state([actuator_id])
+        t_resp = time.time() - start_time
+        log_actuator_state(response=response,data_dict=data_dict)
         data_dict["time"].append(t_resp)
-        data_dict["position"].append(measured_pos)
-        data_dict["velocity"].append(measured_vel)
 
         next_tick += dt
         sleep_time = next_tick - time.time()
@@ -245,8 +206,7 @@ async def run_sine_test(kos: KOS,
                         update_rate: float,
                         data_dict: dict,
                         start_time: float,
-                        is_real: bool,
-                        request_state: bool = True):
+                        is_real: bool):
     """
     Command a sine wave and log timestamps, commanded, and measured values.
     Uses simulation gains (sim_kp, sim_kv) if is_real is False.
@@ -284,14 +244,6 @@ async def run_sine_test(kos: KOS,
     dt = 1.0 / update_rate
     steps = int(duration / dt)
     
-    # Ensure keys exist in data_dict.
-    data_dict.setdefault("cmd_time", [])
-    data_dict.setdefault("resp_time", [])
-    data_dict.setdefault("cmd_pos", [])
-    data_dict.setdefault("cmd_vel", [])
-    data_dict.setdefault("time", [])
-    data_dict.setdefault("position", [])
-    data_dict.setdefault("velocity", [])
     
     next_tick = time.time()
     
@@ -311,28 +263,11 @@ async def run_sine_test(kos: KOS,
             {'actuator_id': actuator_id, 'position': angle, 'velocity': vel}
         ])
 
-        # Immediately query state if enabled; otherwise use commanded values.
-        if request_state:
-            response = await kos.actuator.get_actuators_state([actuator_id])
-            t_resp = time.time() - start_time
-            data_dict["resp_time"].append(t_resp)
-            if response.states:
-                state = response.states[0]
-                measured_pos = state.position
-                measured_vel = state.velocity
-            else:
-                measured_pos, measured_vel = float('nan'), float('nan')
-        else:
-            t_resp = time.time() - start_time
-            data_dict["resp_time"].append(t_resp)
-            measured_pos, measured_vel = angle, vel
-        
-        # Log measured state
+        response = await kos.actuator.get_actuators_state([actuator_id])
+        t_resp = time.time() - start_time
+        log_actuator_state(response=response,data_dict=data_dict)
         data_dict["time"].append(t_resp)
-        data_dict["position"].append(measured_pos)
-        data_dict["velocity"].append(measured_vel)
-        
-        
+                
         next_tick += dt
         sleep_time = next_tick - time.time()
         if sleep_time > 0:
@@ -363,8 +298,8 @@ async def run_step_test(
     data_dict: dict = None,
     start_time: float = None,
     sample_rate: float = 50.0,
-    is_real: bool = True
-):
+    is_real: bool = True):
+
     """
     Perform a step test with continuous sampling during hold periods.
     Uses simulation gains if is_real is False.
@@ -378,18 +313,9 @@ async def run_step_test(
         used_kd = sim_kv
         used_ki = ki
 
-
     if start_time is None:
         start_time = time.time()
-    
-    # Ensure keys exist in data_dict.
-    data_dict.setdefault("cmd_time", [])
-    data_dict.setdefault("cmd_pos", [])
-    data_dict.setdefault("cmd_vel", [])
-    data_dict.setdefault("time", [])
-    data_dict.setdefault("position", [])
-    data_dict.setdefault("velocity", [])
-    
+        
     # Configure the actuator
     await kos.actuator.configure_actuator(
         actuator_id=actuator_id,
@@ -408,69 +334,49 @@ async def run_step_test(
     data_dict["time"].append(t_send)
     data_dict["position"].append(float('nan'))
     data_dict["velocity"].append(float('nan'))
-
+    data_dict["torque"].append(float('nan'))
+    data_dict["temperature"].append(float('nan'))
+    data_dict["voltage"].append(float('nan'))
+    data_dict["current"].append(float('nan'))
 
     await kos.actuator.command_actuators([
         {'actuator_id': actuator_id, 'position': 0.0}
     ])
-    
 
     # Continuously sample during the initial hold.
     end_hold = time.time() + step_hold_time
     while time.time() < end_hold:
         response = await kos.actuator.get_actuators_state([actuator_id])
         t_resp = time.time() - start_time
-        if response.states:
-            state = response.states[0]
-            measured_pos = state.position if state.position is not None else float('nan')
-            measured_vel = state.velocity if state.velocity is not None else float('nan')
-        else:
-            measured_pos, measured_vel = float('nan'), float('nan')
+        log_actuator_state(response=response,data_dict=data_dict)
+        data_dict["time"].append(t_resp)
         data_dict["cmd_time"].append(t_resp)
         data_dict["cmd_pos"].append(0.0)
         data_dict["cmd_vel"].append(vel_limit)
-        data_dict["time"].append(t_resp)
-        data_dict["position"].append(measured_pos)
-        data_dict["velocity"].append(measured_vel)
         await asyncio.sleep(sample_period)
     
-    # Now do repeated step cycles.
+    # Perform the step test.
     for _ in range(step_count):
         # STEP UP
-        response = await kos.actuator.get_actuators_state([actuator_id])
-        if response.states:
-            state = response.states[0]
-            measured_pos = state.position if state.position is not None else float('nan')
-            measured_vel = state.velocity if state.velocity is not None else float('nan')
-        else:
-            measured_pos, measured_vel = float('nan'), float('nan')
         t_send = time.time() - start_time
+        response = await kos.actuator.get_actuators_state([actuator_id])
+        log_actuator_state(response=response,data_dict=data_dict)
+        data_dict["time"].append(t_send)
         data_dict["cmd_time"].append(t_send)
         data_dict["cmd_pos"].append(step_size)
         data_dict["cmd_vel"].append(vel_limit)
-        data_dict["time"].append(t_send)
-        data_dict["position"].append(measured_pos)
-        data_dict["velocity"].append(measured_vel)
-
-        # Determine velocity sign based on current position and target
-        vel_sign = 1 if step_size > measured_pos else -1
+        
         await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': step_size, 'velocity': vel_sign * vel_limit}
+            {'actuator_id': actuator_id, 'position': step_size, 'velocity': vel_limit}
         ])
+
         # Sample continuously during the hold period.
         end_hold = time.time() + step_hold_time
         while time.time() < end_hold:
             response = await kos.actuator.get_actuators_state([actuator_id])
             t_resp = time.time() - start_time
-            if response.states:
-                state = response.states[0]
-                measured_pos = state.position if state.position is not None else float('nan')
-                measured_vel = state.velocity if state.velocity is not None else float('nan')
-            else:
-                measured_pos, measured_vel = float('nan'), float('nan')
+            log_actuator_state(response=response,data_dict=data_dict)
             data_dict["time"].append(t_resp)
-            data_dict["position"].append(measured_pos)
-            data_dict["velocity"].append(measured_vel)
             data_dict["cmd_time"].append(t_resp)
             data_dict["cmd_pos"].append(step_size)
             data_dict["cmd_vel"].append(vel_limit)
@@ -478,33 +384,24 @@ async def run_step_test(
     
         # STEP DOWN
         t_send = time.time() - start_time
+        await kos.actuator.command_actuators([
+            {'actuator_id': actuator_id, 'position': 0.0, 'velocity': vel_limit}
+        ])
+        response = await kos.actuator.get_actuators_state([actuator_id])
+        t_resp = time.time() - start_time
+        log_actuator_state(response=response,data_dict=data_dict)
         data_dict["cmd_time"].append(t_send)
         data_dict["cmd_pos"].append(0.0)
         data_dict["cmd_vel"].append(vel_limit)
-        data_dict["time"].append(t_send)
-        data_dict["position"].append(float('nan'))
-        data_dict["velocity"].append(float('nan'))
+        data_dict["time"].append(t_resp)
         
-        # Determine velocity sign based on current position and target (0.0)
-        vel_sign = 1 if 0.0 > measured_pos else -1
-        await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': 0.0, 'velocity': vel_sign * vel_limit}
-        ])
- 
         # Sample continuously during the hold period.
         end_hold = time.time() + step_hold_time
         while time.time() < end_hold:
             response = await kos.actuator.get_actuators_state([actuator_id])
             t_resp = time.time() - start_time
-            if response.states:
-                state = response.states[0]
-                measured_pos = state.position if state.position is not None else float('nan')
-                measured_vel = state.velocity if state.velocity is not None else float('nan')
-            else:
-                measured_pos, measured_vel = float('nan'), float('nan')
+            log_actuator_state(response=response,data_dict=data_dict)
             data_dict["time"].append(t_resp)
-            data_dict["position"].append(measured_pos)
-            data_dict["velocity"].append(measured_vel)
             data_dict["cmd_time"].append(t_resp)
             data_dict["cmd_pos"].append(0.0)
             data_dict["cmd_vel"].append(vel_limit)
@@ -540,7 +437,7 @@ async def configure_additional_servos(kos: KOS, args):
 # SIMULATOR TEST #
 #############################
 def run_sim_test(args, global_start, out_queue):
-    sim_data = {"time": [], "position": [], "velocity": [], "cmd_time": [], "cmd_pos": [], "cmd_vel": []}
+    sim_data = {"time": [], "position": [], "velocity": [], "torque": [], "voltage": [], "current": [], "temperature": [], "cmd_time": [], "cmd_pos": [], "cmd_vel": []}
     if args.test == "sine":
         asyncio.run(run_sine_test(
             kos=KOS(args.sim_ip),
@@ -559,8 +456,7 @@ def run_sim_test(args, global_start, out_queue):
             update_rate=50.0,
             data_dict=sim_data,
             start_time=global_start,
-            is_real=False,
-            request_state=True
+            is_real=False
         ))
     elif args.test == "step":
         asyncio.run(run_step_test(
@@ -602,8 +498,7 @@ def run_sim_test(args, global_start, out_queue):
             update_rate=50.0,
             data_dict=sim_data,
             start_time=global_start,
-            is_real=False,
-            request_state=True
+            is_real=False
         ))
     out_queue.put(sim_data)
 
@@ -612,7 +507,7 @@ def run_sim_test(args, global_start, out_queue):
 # REAL ROBOT TEST #
 #############################
 def run_real_test(args, global_start, out_queue):
-    real_data = {"time": [], "position": [], "velocity": [], "cmd_time": [], "cmd_pos": [], "cmd_vel": []}
+    real_data = {"time": [], "position": [], "velocity": [], "torque": [], "voltage": [], "current": [], "temperature": [], "cmd_time": [], "cmd_pos": [], "cmd_vel": []}
     if args.test == "sine":
         asyncio.run(run_sine_test(
             kos=KOS(args.ip),
@@ -631,8 +526,7 @@ def run_real_test(args, global_start, out_queue):
             update_rate=50.0,
             data_dict=real_data,
             start_time=global_start,
-            is_real=True,
-            request_state=True
+            is_real=True
         ))
     elif args.test == "step":
         asyncio.run(run_step_test(
@@ -674,8 +568,7 @@ def run_real_test(args, global_start, out_queue):
             update_rate=50.0,
             data_dict=real_data,
             start_time=global_start,
-            is_real=True,
-            request_state=True
+            is_real=True
         ))
     out_queue.put(real_data)
 
@@ -812,9 +705,12 @@ async def main():
     sim_proc.join()
     real_proc.join()
 
+    print("Waiting for data from simulator and real robot...")
+
     sim_data = sim_queue.get()
     real_data = real_queue.get()
 
+    print("Plotting data...")
         # Plotting both simulator and real data on the same plots.
     if not args.no_log:
         os.makedirs("plots", exist_ok=True)
@@ -845,6 +741,11 @@ async def main():
 
         test_joint = JOINT_NAMES.get(args.actuator_id, "")
 
+
+        print("Real data keys:", list(real_data.keys()))
+
+        #with open(f"plots/sine_test_sim_{timestamp}.json", "w") as f:
+        #    json.dump(sim_data, f)
         #with open(f"plots/sine_test_sim_{timestamp}.json", "w") as f:
         #    json.dump(sim_data, f)
         # with open(f"plots/sine_test_real_{timestamp}.json", "w") as f:
