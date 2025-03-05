@@ -111,11 +111,11 @@ def compute_step_overshoots(time_array, pos_array, steps, window_duration=1.0):
 
         if new_target > old_target:
             # For an upward step, overshoot is defined by the maximum value in the window.
-            peak = np.max(p_window)
+            peak = np.nanmax(p_window)
             overshoot = (peak - new_target) / (new_target - old_target) * 100.0
         else:
             # For a downward step, overshoot is defined by the minimum value in the window.
-            trough = np.min(p_window)
+            trough = np.nanmin(p_window)
             overshoot = (new_target - trough) / (old_target - new_target) * 100.0
 
         # Clamp negative overshoot to zero.
@@ -406,8 +406,8 @@ async def run_step_test(
     data_dict["cmd_pos"].append(0.0)
     data_dict["cmd_vel"].append(vel_limit)
     data_dict["time"].append(t_send)
-    data_dict["position"].append(0.0)
-    data_dict["velocity"].append(0.0)
+    data_dict["position"].append(float('nan'))
+    data_dict["velocity"].append(float('nan'))
 
 
     await kos.actuator.command_actuators([
@@ -426,29 +426,37 @@ async def run_step_test(
             measured_vel = state.velocity if state.velocity is not None else float('nan')
         else:
             measured_pos, measured_vel = float('nan'), float('nan')
-        data_dict["time"].append(t_resp)
-        data_dict["position"].append(measured_pos)
-        data_dict["velocity"].append(measured_vel)
         data_dict["cmd_time"].append(t_resp)
         data_dict["cmd_pos"].append(0.0)
         data_dict["cmd_vel"].append(vel_limit)
+        data_dict["time"].append(t_resp)
+        data_dict["position"].append(measured_pos)
+        data_dict["velocity"].append(measured_vel)
         await asyncio.sleep(sample_period)
     
     # Now do repeated step cycles.
     for _ in range(step_count):
         # STEP UP
+        response = await kos.actuator.get_actuators_state([actuator_id])
+        if response.states:
+            state = response.states[0]
+            measured_pos = state.position if state.position is not None else float('nan')
+            measured_vel = state.velocity if state.velocity is not None else float('nan')
+        else:
+            measured_pos, measured_vel = float('nan'), float('nan')
         t_send = time.time() - start_time
         data_dict["cmd_time"].append(t_send)
         data_dict["cmd_pos"].append(step_size)
         data_dict["cmd_vel"].append(vel_limit)
         data_dict["time"].append(t_send)
-        data_dict["position"].append(0.0)
-        data_dict["velocity"].append(0.0)
+        data_dict["position"].append(measured_pos)
+        data_dict["velocity"].append(measured_vel)
 
+        # Determine velocity sign based on current position and target
+        vel_sign = 1 if step_size > measured_pos else -1
         await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': step_size}
+            {'actuator_id': actuator_id, 'position': step_size, 'velocity': vel_sign * vel_limit}
         ])
-    
         # Sample continuously during the hold period.
         end_hold = time.time() + step_hold_time
         while time.time() < end_hold:
@@ -474,10 +482,13 @@ async def run_step_test(
         data_dict["cmd_pos"].append(0.0)
         data_dict["cmd_vel"].append(vel_limit)
         data_dict["time"].append(t_send)
-        data_dict["position"].append(step_size)
-        data_dict["velocity"].append(0.0)
+        data_dict["position"].append(float('nan'))
+        data_dict["velocity"].append(float('nan'))
+        
+        # Determine velocity sign based on current position and target (0.0)
+        vel_sign = 1 if 0.0 > measured_pos else -1
         await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': 0.0}
+            {'actuator_id': actuator_id, 'position': 0.0, 'velocity': vel_sign * vel_limit}
         ])
  
         # Sample continuously during the hold period.
@@ -718,8 +729,8 @@ async def main():
     parser.add_argument("--sample-rate", type=float, default=100.0, help="Data collection rate (Hz)")
 
     # Servo Enable/Disable
-    parser.add_argument("--enable-servos", type=str, help="Comma delimited list of servo IDs to enable on the real robot (e.g., 11,12,13)")
-    parser.add_argument("--disable-servos", type=str, help="Comma delimited list of servo IDs to disable on the real robot (e.g., 31,32,33)")
+    parser.add_argument("--enable-servos", type=str, help="Comma delimited list of servo IDs to enable (e.g., 11,12,13)")
+    parser.add_argument("--disable-servos", type=str, help="Comma delimited list of servo IDs to disable (e.g., 31,32,33)")
 
     args = parser.parse_args()
 
@@ -747,6 +758,10 @@ async def main():
         real_kos = KOS(args.ip)
         await configure_additional_servos(real_kos, args)
         await real_kos.close()
+
+        sim_kos = KOS(args.sim_ip)
+        await configure_additional_servos(sim_kos, args)
+        await sim_kos.close()
         print("Servos configured")
         return
     elif not args.test:
@@ -759,7 +774,7 @@ async def main():
     sim_kos = KOS(args.sim_ip)
     sim_start = time.time()
     for _ in range(100):  # Test 100 samples
-        await sim_kos.actuator.command_actuators([{'actuator_id': args.actuator_id, 'position': 0.0}])
+        await sim_kos.actuator.get_actuators_state([args.actuator_id])
     sim_end = time.time()
     sim_rate = 100 / (sim_end - sim_start)
     await sim_kos.close()
@@ -768,7 +783,7 @@ async def main():
     real_kos = KOS(args.ip)
     real_start = time.time() 
     for _ in range(100):  # Test 100 samples
-        await real_kos.actuator.command_actuators([{'actuator_id': args.actuator_id, 'position': 0.0}])
+        await real_kos.actuator.get_actuators_state([args.actuator_id])
     real_end = time.time()
     real_rate = 100 / (real_end - real_start)
     await real_kos.close()
@@ -806,22 +821,22 @@ async def main():
         print(f"Saving plot data to plots/{args.test}_test_{now_str}.png")
 
         JOINT_NAMES = {
-            11: "Left Shoulder Yaw",
+            11: "Left Shoulder Roll",
             12: "Left Shoulder Pitch", 
-            13: "Left Elbow Yaw",
+            13: "Left Elbow Roll",
             14: "Left Gripper",
-            21: "Right Shoulder Yaw",
+            21: "Right Shoulder Roll",
             22: "Right Shoulder Pitch",
-            23: "Right Elbow Yaw", 
+            23: "Right Elbow Roll", 
             24: "Right Gripper",
-            31: "Left Hip Pitch",
-            32: "Left Hip Yaw",
-            33: "Left Hip Roll",
+            31: "Left Hip Yaw",
+            32: "Left Hip Roll",
+            33: "Left Hip Pitch",
             34: "Left Knee Pitch",
             35: "Left Ankle Pitch",
-            41: "Right Hip Pitch",
-            42: "Right Hip Yaw",
-            43: "Right Hip Roll",
+            41: "Right Hip Yaw",
+            42: "Right Hip Roll",
+            43: "Right Hip Pitch",
             44: "Right Knee Pitch",
             45: "Right Ankle Pitch"
         }
@@ -874,7 +889,7 @@ async def main():
 
         # Simulator subplots (left column)
         axs[0, 0].plot(sim_data["cmd_time"], sim_data["cmd_pos"], '--', color='black', linewidth=1, label='Sim Command Pos')
-        axs[0, 0].plot(sim_data["time"], sim_data["position"], 'o-', color='blue', markersize=0.01, label='Sim Actual Pos')
+        axs[0, 0].plot(sim_data["time"], sim_data["position"], 'o-', color='blue', markersize=2, label='Sim Actual Pos')
         axs[0, 0].set_title("Sim - Position")
         axs[0, 0].set_ylabel("Position (deg)")
         axs[0, 0].legend()
@@ -882,7 +897,7 @@ async def main():
 
         if args.test == "sine":
             axs[1, 0].plot(sim_data["cmd_time"], sim_data["cmd_vel"], '--', color='black', linewidth=1, label='Sim Command Vel')
-        axs[1, 0].plot(sim_data["time"], sim_data["velocity"], 'o-', color='blue', markersize=0.01, label='Sim Actual Vel')
+        axs[1, 0].plot(sim_data["time"], sim_data["velocity"], 'o-', color='blue', markersize=2, label='Sim Actual Vel')
         axs[1, 0].set_title("Sim - Velocity")
         axs[1, 0].set_xlabel("Time (s)")
         axs[1, 0].set_ylabel("Velocity (deg/s)")
@@ -891,7 +906,7 @@ async def main():
 
         # Real Robot subplots (right column)
         axs[0, 1].plot(real_data["cmd_time"], real_data["cmd_pos"], '--', color='black', linewidth=1, label='Real Command Pos')
-        axs[0, 1].plot(real_data["time"], real_data["position"], 's-', color='red', markersize=0.01, linewidth=1, label='Real Actual Pos')
+        axs[0, 1].plot(real_data["time"], real_data["position"], 's-', color='red', markersize=2, linewidth=1, label='Real Actual Pos')
         axs[0, 1].set_title("Real - Position")
         axs[0, 1].set_ylabel("Position (deg)")
         axs[0, 1].legend()
@@ -899,7 +914,7 @@ async def main():
 
         if args.test == "sine":
             axs[1, 1].plot(real_data["cmd_time"], real_data["cmd_vel"], '--', color='black', linewidth=1, label='Real Command Vel')
-        axs[1, 1].plot(real_data["time"], real_data["velocity"], 's-', color='red', markersize=0.01, linewidth=1,label='Real Actual Vel')
+        axs[1, 1].plot(real_data["time"], real_data["velocity"], 's-', color='red', markersize=2, linewidth=1,label='Real Actual Vel')
         axs[1, 1].set_title("Real - Velocity")
         axs[1, 1].set_xlabel("Time (s)")
         axs[1, 1].set_ylabel("Velocity (deg/s)")
