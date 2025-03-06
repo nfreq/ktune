@@ -33,6 +33,8 @@ options:
                         Actuator ID to test.
   --test {step,sine,chirp}
                         Type of test to run.
+  --start-pos START_POS
+                        Start position for tests (degrees)
   --chirp-amp CHIRP_AMP
                         Chirp amplitude (degrees)
   --chirp-init-freq CHIRP_INIT_FREQ
@@ -66,9 +68,10 @@ options:
   --sample-rate SAMPLE_RATE
                         Data collection rate (Hz)
   --enable-servos ENABLE_SERVOS
-                        Comma delimited list of servo IDs to enable on the real robot (e.g., 11,12,13)
+                        Comma delimited list of servo IDs to enable (e.g., 11,12,13)
   --disable-servos DISABLE_SERVOS
-                        Comma delimited list of servo IDs to disable on the real robot (e.g., 31,32,33)
+                        Comma delimited list of servo IDs to disable (e.g., 31,32,33)
+  --version             show program's version number and exit
 ```
 ### Running a Step Test
 
