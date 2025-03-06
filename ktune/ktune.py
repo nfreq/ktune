@@ -1,13 +1,6 @@
 #!/usr/bin/env python3
 """
-ktune - A CLI tool for running simple actuator tests (sine or step).
-Example usage:
-    # Sine test:
-    ./ktune.py --actuator_id 11 --test sine --freq 1.0 --amp 5.0 --duration 5.0
-
-    # Step test:
-    ./ktune.py --actuator_id 11 --test step --step_size 10.0 --step_hold_time 1.0 --step_count 2
-
+ktune - A CLI tool for tuning Sim2Real
     # See --help for all options.
 """
 
@@ -23,6 +16,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import logging
 from pykos import KOS
+from . import __version__
 
 os.environ["PYTHON_IMK_OVERRIDE"] = "1"
 # Suppress gRPC fork warnings
@@ -131,7 +125,8 @@ async def run_chirp_test(kos: KOS,
                          update_rate: float,
                          data_dict: dict,
                          start_time: float,
-                         is_real: bool):
+                         is_real: bool,
+                         start_pos: float = 0.0):
     """
     Command a chirp waveform and log timestamps, commanded, and measured values.
     The chirp is defined as:
@@ -155,6 +150,12 @@ async def run_chirp_test(kos: KOS,
 
     print(f"Chirp Test | Real: {is_real}, Init Freq: {init_freq} Hz, Sweep Rate: {sweep_rate} Hz/s, Amp: {amplitude}°, Duration: {duration}s")
 
+    await kos.actuator.command_actuators([
+        {'actuator_id': actuator_id, 'position': start_pos, 'velocity': 5}
+    ])
+    await asyncio.sleep(2)
+    start_time = time.time()
+
     dt = 1.0 / update_rate
     steps = int(duration / dt)
     next_tick = time.time()
@@ -162,7 +163,7 @@ async def run_chirp_test(kos: KOS,
         t = i * dt
         # Compute phase, angle and velocity.
         phase = 2 * math.pi * (init_freq * t + 0.5 * sweep_rate * t * t)
-        angle = amplitude * math.sin(phase)
+        angle = start_pos + amplitude * math.sin(phase)
         vel = amplitude * math.cos(phase) * 2 * math.pi * (init_freq + sweep_rate * t)
 
         t_send = time.time() - start_time
@@ -205,7 +206,8 @@ async def run_sine_test(kos: KOS,
                         update_rate: float,
                         data_dict: dict,
                         start_time: float,
-                        is_real: bool):
+                        is_real: bool,
+                        start_pos: float = 0.0):
     """
     Command a sine wave and log timestamps, commanded, and measured values.
     Uses simulation gains (sim_kp, sim_kv) if is_real is False.
@@ -240,12 +242,18 @@ async def run_sine_test(kos: KOS,
 
     print(f"Real: {is_real}, Frequency: {freq}, Amplitude: {amplitude}, Duration: {duration}")
 
+    await kos.actuator.command_actuators([
+        {'actuator_id': actuator_id, 'position': start_pos, 'velocity': 2}
+    ])
+    await asyncio.sleep(2)
+    start_time = time.time()
+
     dt = 1.0 / update_rate
     steps = int(duration / dt)
     next_tick = time.time()
     for i in range(steps):
         t = i * dt
-        angle = amplitude * math.sin(2.0 * math.pi * freq * t)
+        angle = start_pos + amplitude * math.sin(2.0 * math.pi * freq * t)
         vel = amplitude * (2.0 * math.pi * freq) * math.cos(2.0 * math.pi * freq * t)
 
         # Log command time
@@ -294,7 +302,8 @@ async def run_step_test(
     data_dict: dict = None,
     start_time: float = None,
     sample_rate: float = 50.0,
-    is_real: bool = True):
+    is_real: bool = True,
+    start_pos: float = 0.0):
 
     """
     Perform a step test with continuous sampling during hold periods.
@@ -317,6 +326,24 @@ async def run_step_test(
         max_torque=max_torque,
         torque_enabled=torque_enabled
     )
+    init_velocity = 20
+    if is_real:
+        await kos.actuator.command_actuators([
+            {'actuator_id': actuator_id, 'position': start_pos, 'velocity': init_velocity}
+        ])
+        #await asyncio.sleep(0.1)
+        await kos.actuator.command_actuators([
+            {'actuator_id': actuator_id, 'position': start_pos, 'velocity': init_velocity}
+        ])
+        #await asyncio.sleep(0.1)
+        await kos.actuator.command_actuators([
+            {'actuator_id': actuator_id, 'position': start_pos, 'velocity': init_velocity}
+        ])
+        
+    else:
+        await kos.actuator.command_actuators([{'actuator_id': actuator_id, 'position': start_pos}])
+
+    await asyncio.sleep(abs(start_pos)/(init_velocity)+3)
     sample_period = 1.0 / sample_rate
     next_sample_time = time.time()
 
@@ -339,38 +366,43 @@ async def run_step_test(
             print(f"Error sampling state: {e}")
 
 
-    # Initial hold at 0°.
-    await kos.actuator.command_actuators([
-        {'actuator_id': actuator_id, 'position': 0.0}
-    ])
-
+    start_time = time.time()
     end_hold = time.time() + step_hold_time
     while time.time() < end_hold:
-        await sample_state(current_cmd_pos=0.0, current_cmd_vel=vel_limit)
+        await sample_state(current_cmd_pos=start_pos, current_cmd_vel=vel_limit)
     
     for _ in range(step_count):
         # STEP UP        
-        await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': step_size, 'velocity': vel_limit}
-        ])
-        await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': step_size, 'velocity': vel_limit}
-        ])
+        target_pos = start_pos + step_size
+        if is_real:
+            await kos.actuator.command_actuators([
+                {'actuator_id': actuator_id, 'position': target_pos, 'velocity': vel_limit}
+            ])
+            await asyncio.sleep(0.01)
+            await kos.actuator.command_actuators([
+                {'actuator_id': actuator_id, 'position': target_pos, 'velocity': vel_limit}
+            ])
+        else:
+            await kos.actuator.command_actuators([{'actuator_id': actuator_id, 'position': target_pos}])
         end_hold = time.time() + step_hold_time
         while time.time() < end_hold:
-            await sample_state(current_cmd_pos=step_size, current_cmd_vel=vel_limit)
+            await sample_state(current_cmd_pos=target_pos, current_cmd_vel=vel_limit)
     
         # STEP DOWN
-        await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': 0, 'velocity': vel_limit}
-        ])
-        await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': 0, 'velocity': vel_limit}
-        ])
-
+        target_pos = start_pos
+        if is_real:
+            await kos.actuator.command_actuators([
+                {'actuator_id': actuator_id, 'position': target_pos, 'velocity': vel_limit}
+            ])
+            await asyncio.sleep(0.01)
+            await kos.actuator.command_actuators([
+                {'actuator_id': actuator_id, 'position': target_pos, 'velocity': vel_limit}
+            ])
+        else:
+            await kos.actuator.command_actuators([{'actuator_id': actuator_id, 'position': target_pos}])
         end_hold = time.time() + step_hold_time
         while time.time() < end_hold:
-            await sample_state(current_cmd_pos=0, current_cmd_vel=vel_limit)
+            await sample_state(current_cmd_pos=target_pos, current_cmd_vel=vel_limit)
 
 
 #############################
@@ -421,7 +453,8 @@ def run_sim_test(args, global_start, out_queue):
             update_rate=50.0,
             data_dict=sim_data,
             start_time=global_start,
-            is_real=False
+            is_real=False,
+            start_pos=args.start_pos,
         ))
     elif args.test == "step":
         asyncio.run(run_step_test(
@@ -442,7 +475,8 @@ def run_sim_test(args, global_start, out_queue):
             data_dict=sim_data,
             start_time=global_start,
             sample_rate=args.sample_rate,
-            is_real=False
+            is_real=False,
+            start_pos=args.start_pos,
         ))
     elif args.test == "chirp":
         asyncio.run(run_chirp_test(
@@ -463,7 +497,8 @@ def run_sim_test(args, global_start, out_queue):
             update_rate=50.0,
             data_dict=sim_data,
             start_time=global_start,
-            is_real=False
+            is_real=False,
+            start_pos=args.start_pos,
         ))
     out_queue.put(sim_data)
 
@@ -491,7 +526,8 @@ def run_real_test(args, global_start, out_queue):
             update_rate=50.0,
             data_dict=real_data,
             start_time=global_start,
-            is_real=True
+            is_real=True,
+            start_pos=args.start_pos,
         ))
     elif args.test == "step":
         asyncio.run(run_step_test(
@@ -512,7 +548,8 @@ def run_real_test(args, global_start, out_queue):
             data_dict=real_data,
             start_time=global_start,
             sample_rate=args.sample_rate,
-            is_real=True
+            is_real=True,
+            start_pos=args.start_pos,
         ))
     elif args.test == "chirp":
         asyncio.run(run_chirp_test(
@@ -533,7 +570,8 @@ def run_real_test(args, global_start, out_queue):
             update_rate=50.0,
             data_dict=real_data,
             start_time=global_start,
-            is_real=True
+            is_real=True,
+            start_pos=args.start_pos,
         ))
     out_queue.put(real_data)
 
@@ -551,7 +589,7 @@ async def main():
     parser.add_argument("--ip", default="192.168.42.1", help="Real robot KOS IP address (default=192.168.42.1)")
     parser.add_argument("--actuator-id", type=int, default=11, help="Actuator ID to test.")
     parser.add_argument("--test", choices=["step", "sine", "chirp"], help="Type of test to run.")
-
+    parser.add_argument("--start-pos", type=float, default=0.0, help="Start position for tests (degrees)")
     # Chirp test parameters
     parser.add_argument("--chirp-amp", type=float, default=5.0, help="Chirp amplitude (degrees)")
     parser.add_argument("--chirp-init-freq", type=float, default=1.0, help="Chirp initial frequency (Hz)")
@@ -576,7 +614,7 @@ async def main():
     parser.add_argument("--kp", type=float, default=20.0, help="Proportional gain")
     parser.add_argument("--kd", type=float, default=55.0, help="Derivative gain")
     parser.add_argument("--ki", type=float, default=0.01, help="Integral gain")
-    parser.add_argument("--acceleration", type=float, default=2000.0, help="Acceleration (deg/s^2)")
+    parser.add_argument("--acceleration", type=float, default=0.0, help="Acceleration (deg/s^2)")
     parser.add_argument("--max-torque", type=float, default=100.0, help="Max torque")
     parser.add_argument("--torque-off", action="store_true", help="Disable torque for test?")
 
@@ -589,7 +627,7 @@ async def main():
     # Servo Enable/Disable
     parser.add_argument("--enable-servos", type=str, help="Comma delimited list of servo IDs to enable (e.g., 11,12,13)")
     parser.add_argument("--disable-servos", type=str, help="Comma delimited list of servo IDs to disable (e.g., 31,32,33)")
-
+    parser.add_argument('--version', action='version', version=f'ktune v{__version__}')
     args = parser.parse_args()
 
     # Prepare separate data dictionaries for simulator and real robot.
@@ -721,6 +759,7 @@ async def main():
             "joint_name": test_joint,
             "timestamp": now_str,
             "robot_name": args.name,
+            "start_position": args.start_pos,
             "gains": {
                 "sim": {"kp": args.sim_kp, "kv": args.sim_kv},
                 "real": {"kp": args.kp, "kd": args.kd, "ki": args.ki}
@@ -736,8 +775,9 @@ async def main():
                 "duration": args.chirp_duration
             })
             title_str = (f"{args.name} -- Chirp Test -- ID: {args.actuator_id} {test_joint}\n"
-                        f"Init Freq: {args.chirp_init_freq} Hz, Sweep Rate: {args.chirp_sweep_rate} Hz/s, "
-                        f"Amp: {args.chirp_amp}°, Duration: {args.chirp_duration}s\n"
+                        f"Center: {args.start_pos}°, Init Freq: {args.chirp_init_freq} Hz, "
+                        f"Sweep Rate: {args.chirp_sweep_rate} Hz/s, Amp: {args.chirp_amp}°, Duration: {args.chirp_duration}s\n"
+                        f"Update Rate: 50 Hz\n"
                         f"Sim Kp: {args.sim_kp} Kv: {args.sim_kv} | Real Kp: {args.kp} Kd: {args.kd} Ki: {args.ki}\n"
                         f"Acceleration: {args.acceleration:.0f} deg/s²")
         elif args.test == "sine":
@@ -749,7 +789,8 @@ async def main():
                 "sample_rate": args.sample_rate
             })
             title_str = (f"{args.name} -- Sine Wave Test -- ID: {args.actuator_id} {test_joint}\n"
-                        f"Freq: {args.freq} Hz, Amp: {args.amp}°, Cmd: 50Hz, Data: {args.sample_rate} Hz\n"
+                        f"Center: {args.start_pos}°, Freq: {args.freq} Hz, Amp: {args.amp}°, "
+                        f"Sample/Ctrl Rate: {args.sample_rate} Hz\n"
                         f"Sim Kp: {args.sim_kp} Kv: {args.sim_kv} | Real Kp: {args.kp} Kd: {args.kd} Ki: {args.ki}\n"
                         f"Acceleration: {args.acceleration:.0f} deg/s²")
         elif args.test == "step":
@@ -779,7 +820,8 @@ async def main():
             })
             title_str = (
                 f"{args.name} -- Step Test -- ID: {args.actuator_id} {test_joint}\n"
-                f"Step Size: {args.step_size}°, Hold: {args.step_hold_time}s, Count: {args.step_count}\n"
+                f"Center: {args.start_pos}°, Step Size: ±{args.step_size}°, Hold: {args.step_hold_time}s, Count: {args.step_count}\n"
+                f"Update Rate: {args.sample_rate} Hz\n"
                 f"Sim Kp: {args.sim_kp} Kv: {args.sim_kv} | Real Kp: {args.kp} Kd: {args.kd} Ki: {args.ki}\n"
                 f"Overshoot - Sim: {max_overshoot_sim:.1f}%  Real: {max_overshoot_real:.1f}%\n"
                 f"Acceleration: {args.acceleration:.0f} deg/s²"
@@ -840,7 +882,7 @@ async def main():
         axs[1, 1].legend()
         axs[1, 1].grid(True)
 
-        plt.figtext(0.5, 0.02, "ktune", ha='center', va='center', fontsize=12)
+        plt.figtext(0.5, 0.02, f"ktune v{__version__}", ha='center', va='center', fontsize=12)
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
         png_path = os.path.join(plot_dir, f"{now_str}_{args.test}.png")
         plt.savefig(png_path)
