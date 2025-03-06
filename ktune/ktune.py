@@ -151,7 +151,7 @@ async def run_chirp_test(kos: KOS,
     print(f"Chirp Test | Real: {is_real}, Init Freq: {init_freq} Hz, Sweep Rate: {sweep_rate} Hz/s, Amp: {amplitude}°, Duration: {duration}s")
 
     await kos.actuator.command_actuators([
-        {'actuator_id': actuator_id, 'position': start_pos, 'velocity': 5}
+        {'actuator_id': actuator_id, 'position': start_pos} #, 'velocity': 5}
     ])
     await asyncio.sleep(2)
     start_time = time.time()
@@ -172,7 +172,7 @@ async def run_chirp_test(kos: KOS,
         data_dict["cmd_vel"].append(vel)
 
         await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': angle, 'velocity': vel}
+            {'actuator_id': actuator_id, 'position': angle} #, 'velocity': vel}
         ])
 
         response = await kos.actuator.get_actuators_state([actuator_id])
@@ -243,7 +243,7 @@ async def run_sine_test(kos: KOS,
     print(f"Real: {is_real}, Frequency: {freq}, Amplitude: {amplitude}, Duration: {duration}")
 
     await kos.actuator.command_actuators([
-        {'actuator_id': actuator_id, 'position': start_pos, 'velocity': 2}
+        {'actuator_id': actuator_id, 'position': start_pos} #, 'velocity': 2}
     ])
     await asyncio.sleep(2)
     start_time = time.time()
@@ -264,7 +264,7 @@ async def run_sine_test(kos: KOS,
         
         # Send the command
         await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': angle, 'velocity': vel}
+            {'actuator_id': actuator_id, 'position': angle} #, 'velocity': vel}
         ])
 
         response = await kos.actuator.get_actuators_state([actuator_id])
@@ -326,24 +326,10 @@ async def run_step_test(
         max_torque=max_torque,
         torque_enabled=torque_enabled
     )
-    init_velocity = 20
-    if is_real:
-        await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': start_pos, 'velocity': init_velocity}
-        ])
-        #await asyncio.sleep(0.1)
-        await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': start_pos, 'velocity': init_velocity}
-        ])
-        #await asyncio.sleep(0.1)
-        await kos.actuator.command_actuators([
-            {'actuator_id': actuator_id, 'position': start_pos, 'velocity': init_velocity}
-        ])
-        
-    else:
-        await kos.actuator.command_actuators([{'actuator_id': actuator_id, 'position': start_pos}])
 
-    await asyncio.sleep(abs(start_pos)/(init_velocity)+3)
+    await kos.actuator.command_actuators([{'actuator_id': actuator_id, 'position': start_pos}])
+
+    await asyncio.sleep(2)
     sample_period = 1.0 / sample_rate
     next_sample_time = time.time()
 
@@ -374,32 +360,14 @@ async def run_step_test(
     for _ in range(step_count):
         # STEP UP        
         target_pos = start_pos + step_size
-        if is_real:
-            await kos.actuator.command_actuators([
-                {'actuator_id': actuator_id, 'position': target_pos, 'velocity': vel_limit}
-            ])
-            await asyncio.sleep(0.01)
-            await kos.actuator.command_actuators([
-                {'actuator_id': actuator_id, 'position': target_pos, 'velocity': vel_limit}
-            ])
-        else:
-            await kos.actuator.command_actuators([{'actuator_id': actuator_id, 'position': target_pos}])
+        await kos.actuator.command_actuators([{'actuator_id': actuator_id, 'position': target_pos}])
         end_hold = time.time() + step_hold_time
         while time.time() < end_hold:
             await sample_state(current_cmd_pos=target_pos, current_cmd_vel=vel_limit)
     
         # STEP DOWN
         target_pos = start_pos
-        if is_real:
-            await kos.actuator.command_actuators([
-                {'actuator_id': actuator_id, 'position': target_pos, 'velocity': vel_limit}
-            ])
-            await asyncio.sleep(0.01)
-            await kos.actuator.command_actuators([
-                {'actuator_id': actuator_id, 'position': target_pos, 'velocity': vel_limit}
-            ])
-        else:
-            await kos.actuator.command_actuators([{'actuator_id': actuator_id, 'position': target_pos}])
+        await kos.actuator.command_actuators([{'actuator_id': actuator_id, 'position': target_pos}])
         end_hold = time.time() + step_hold_time
         while time.time() < end_hold:
             await sample_state(current_cmd_pos=target_pos, current_cmd_vel=vel_limit)
