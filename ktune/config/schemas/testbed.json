@@ -1,0 +1,93 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "type": {
+        "type": "string",
+        "enum": ["pendulum"],
+        "description": "Type of test apparatus"
+      },
+      "pendulum": {
+        "type": "object",
+        "properties": {
+          "mass": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Mass of pendulum (kg)"
+          },
+          "length": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "Length of pendulum (m)"
+          },
+          "inertia": {
+            "type": "number",
+            "description": "Moment of inertia (kg⋅m²), calculated if not provided"
+          },
+          "zero_position": {
+            "type": "number",
+            "default": 0.0,
+            "description": "Zero position offset (degrees)"
+          }
+        },
+        "required": ["mass", "length"]
+      },
+      "trajectories": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name of trajectory"
+            },
+            "type": {
+              "type": "string",
+              "enum": ["sine", "chirp", "step"],
+              "description": "Type of trajectory"
+            },
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "amplitude": {
+                  "type": "number",
+                  "description": "Motion amplitude (degrees)"
+                },
+                "frequency": {
+                  "type": "number",
+                  "description": "Frequency for sine/initial frequency for chirp (Hz)"
+                },
+                "duration": {
+                  "type": "number",
+                  "description": "Duration of trajectory (seconds)"
+                },
+                "sweep_rate": {
+                  "type": "number",
+                  "description": "Frequency sweep rate for chirp (Hz/s)"
+                },
+                "hold_time": {
+                  "type": "number",
+                  "description": "Hold time for step trajectory (seconds)"
+                }
+              }
+            },
+            "safety": {
+              "type": "object",
+              "properties": {
+                "max_position": {
+                  "type": "number",
+                  "description": "Maximum allowed position (degrees)"
+                },
+                "max_velocity": {
+                  "type": "number",
+                  "description": "Maximum allowed velocity (deg/s)"
+                }
+              }
+            }
+          },
+          "required": ["name", "type", "parameters"]
+        }
+      }
+    },
+    "required": ["type"]
+  }

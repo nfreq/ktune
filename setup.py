@@ -65,7 +65,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "ktune=ktune.ktune:cli",
+            'ktune=ktune.cli.commands:cli',
         ],
     },
 )

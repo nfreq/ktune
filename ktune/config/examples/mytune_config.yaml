@@ -1,0 +1,30 @@
+name: "MyTest"
+connection:
+  sim_ip: "127.0.0.1"
+  real_ip: "192.168.42.1"
+
+actuator:
+  id: 11
+  start_position: 0.0
+  gains:
+    kp: 20.0
+    kd: 55.0
+    ki: 0.01
+  sim_gains:
+    kp: 24.0
+    kv: 0.75
+
+tests:
+  type: "sine"
+  sine:
+    frequency: 1.0
+    amplitude: 5.0
+    duration: 5.0
+
+logging:
+  enabled: true
+  sample_rate: 100.0
+
+servo_control:
+  enable: [11, 12, 13]
+  disable: [31, 32, 33]

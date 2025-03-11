@@ -1,0 +1,210 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "default": "Zeroth01",
+        "description": "Name for plot titles"
+      },
+      "connection": {
+        "type": "object",
+        "properties": {
+          "sim_ip": {
+            "type": "string",
+            "default": "127.0.0.1",
+            "description": "Simulator KOS IP address"
+          },
+          "real_ip": {
+            "type": "string",
+            "default": "192.168.42.1",
+            "description": "Real robot KOS IP address"
+          }
+        }
+      },
+      "actuator": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "default": 11,
+            "description": "Actuator ID to test"
+          },
+          "start_position": {
+            "type": "number",
+            "default": 0.0,
+            "description": "Start position for tests (degrees)"
+          },
+          "gains": {
+            "type": "object",
+            "properties": {
+              "kp": {
+                "type": "number",
+                "default": 20.0,
+                "description": "Proportional gain"
+              },
+              "kd": {
+                "type": "number",
+                "default": 55.0,
+                "description": "Derivative gain"
+              },
+              "ki": {
+                "type": "number",
+                "default": 0.01,
+                "description": "Integral gain"
+              }
+            }
+          },
+          "sim_gains": {
+            "type": "object",
+            "properties": {
+              "kp": {
+                "type": "number",
+                "default": 24.0,
+                "description": "Simulation proportional gain"
+              },
+              "kv": {
+                "type": "number",
+                "default": 0.75,
+                "description": "Simulation damping gain"
+              }
+            }
+          },
+          "config": {
+            "type": "object",
+            "properties": {
+              "acceleration": {
+                "type": "number",
+                "default": 0.0,
+                "description": "Acceleration (deg/s^2)"
+              },
+              "max_torque": {
+                "type": "number",
+                "default": 100.0,
+                "description": "Max torque"
+              },
+              "torque_enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "Enable/disable torque"
+              }
+            }
+          }
+        }
+      },
+      "tests": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["step", "sine", "chirp"],
+            "description": "Type of test to run"
+          },
+          "sine": {
+            "type": "object",
+            "properties": {
+              "frequency": {
+                "type": "number",
+                "default": 1.0,
+                "description": "Sine frequency (Hz)"
+              },
+              "amplitude": {
+                "type": "number",
+                "default": 5.0,
+                "description": "Sine amplitude (degrees)"
+              },
+              "duration": {
+                "type": "number",
+                "default": 5.0,
+                "description": "Sine test duration (seconds)"
+              }
+            }
+          },
+          "chirp": {
+            "type": "object",
+            "properties": {
+              "amplitude": {
+                "type": "number",
+                "default": 5.0,
+                "description": "Chirp amplitude (degrees)"
+              },
+              "initial_frequency": {
+                "type": "number",
+                "default": 1.0,
+                "description": "Chirp initial frequency (Hz)"
+              },
+              "sweep_rate": {
+                "type": "number",
+                "default": 0.5,
+                "description": "Chirp sweep rate (Hz per second)"
+              },
+              "duration": {
+                "type": "number",
+                "default": 5.0,
+                "description": "Chirp test duration (seconds)"
+              }
+            }
+          },
+          "step": {
+            "type": "object",
+            "properties": {
+              "size": {
+                "type": "number",
+                "default": 10.0,
+                "description": "Step size (degrees)"
+              },
+              "hold_time": {
+                "type": "number",
+                "default": 3.0,
+                "description": "Time to hold at step (seconds)"
+              },
+              "count": {
+                "type": "integer",
+                "default": 2,
+                "description": "Number of steps to take"
+              }
+            }
+          }
+        }
+      },
+      "logging": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Enable/disable data recording and plotting"
+          },
+          "duration_pad": {
+            "type": "number",
+            "default": 2.0,
+            "description": "Pad (seconds) after motion ends to keep logging"
+          },
+          "sample_rate": {
+            "type": "number",
+            "default": 100.0,
+            "description": "Data collection rate (Hz)"
+          }
+        }
+      },
+      "servo_control": {
+        "type": "object",
+        "properties": {
+          "enable": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "List of servo IDs to enable"
+          },
+          "disable": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "List of servo IDs to disable"
+          }
+        }
+      }
+    }
+  }
