@@ -49,7 +49,15 @@ setup(
         "dev": requirements_dev,
         "examples": requirements_examples,
     },
-    packages=["ktune"],
+    packages=[
+        "ktune",
+        "ktune.cli",
+        "ktune.core",
+        "ktune.core.sysid",
+        "ktune.core.sysid.testbed",
+        "ktune.core.utils",
+        "ktune.config"
+    ],
     include_package_data=True,
     package_data={
         "ktune": ["requirements.txt"],
@@ -65,7 +73,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            'ktune=ktune.cli.commands:cli',
+            'ktune=ktune.cli.command:cli',
         ],
     },
 )

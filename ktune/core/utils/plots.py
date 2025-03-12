@@ -3,7 +3,7 @@ import numpy as np
 from ktune import __version__
 from ktune.core.utils import metrics
 import os
-
+from pathlib import Path
 class Plot:
     """Handles plotting of test results."""
 
@@ -229,3 +229,111 @@ class Plot:
             )
         else:
             return f"{self.config.test.capitalize()} Test - Actuator {self.config.actuator_id}"
+        
+class PendulumPlot:
+    """Handles plotting of pendulum system identification results."""
+
+    def __init__(self, data: dict):
+        """Initialize with experiment data.
+        
+        Args:
+            data: Dictionary containing experiment data and config
+        """
+        self.data = data
+        self.entries = data['entries']
+
+    def create_plots(self, save_dir: str | Path, timestamp: str = None):
+        """Create and save analysis plots.
+        
+        Args:
+            save_dir: Directory to save plots
+            timestamp: Optional timestamp for file naming
+        """
+        # Extract time series data
+        t = np.array([entry['timestamp'] for entry in self.entries])
+        pos = np.array([entry['position'] for entry in self.entries])
+        vel = np.array([entry['speed'] for entry in self.entries])
+        torque = np.array([entry['torque'] for entry in self.entries])
+        goal_pos = np.array([entry['goal_position'] for entry in self.entries])
+        torque_enabled = np.array([entry['torque_enable'] for entry in self.entries])
+
+        # Create main results plot
+        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+        fig.suptitle(f"Pendulum System ID - {self.data['trajectory']}", fontsize=14)
+        
+        # Position tracking plot
+        ax1.plot(t, np.rad2deg(goal_pos), 'k--', label='Command', linewidth=1)
+        ax1.plot(t, np.rad2deg(pos), 'b-', label='Actual', linewidth=1)
+        ax1.set_ylabel('Position (deg)')
+        ax1.grid(True)
+        ax1.legend()
+        
+        # Velocity plot
+        ax2.plot(t, np.rad2deg(vel), 'g-', label='Velocity', linewidth=1)
+        ax2.set_ylabel('Velocity (deg/s)')
+        ax2.grid(True)
+        ax2.legend()
+        
+        # Torque plot with enable status
+        ax3.plot(t, torque, 'r-', label='Torque', linewidth=1)
+        # Add shaded regions for torque disabled periods
+        for i in range(len(t)-1):
+            if not torque_enabled[i]:
+                ax3.axvspan(t[i], t[i+1], color='gray', alpha=0.3)
+        ax3.set_ylabel('Torque')
+        ax3.set_xlabel('Time (s)')
+        ax3.grid(True)
+        ax3.legend()
+        
+        # Add configuration details
+        config_text = (
+            f"Mass: {self.data['mass']}kg, "
+            f"Length: {self.data['length']}m\n"
+            f"Control: Kp={self.data['kp']}, "
+            f"Kd={self.data['kd']}, "
+            f"Ki={self.data['ki']}, "
+            f"Max Torque={self.data['max_torque']}"
+        )
+        fig.text(0.1, 0.01, config_text, fontsize=10)
+        
+        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        
+        # Save results plot
+        save_path = Path(save_dir) / f"pendulum_sysid_{self.data['trajectory']}"
+        if timestamp:
+            save_path = save_path.with_name(f"{timestamp}_{save_path.name}")
+        plt.savefig(f"{save_path}_results.png")
+        plt.close()
+        
+        # Create error analysis plot
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
+        fig.suptitle(f"Tracking Error Analysis - {self.data['trajectory']}", fontsize=14)
+        
+        # Position error
+        pos_error = np.rad2deg(goal_pos - pos)
+        ax1.plot(t, pos_error, 'b-', label='Position Error')
+        ax1.set_ylabel('Position Error (deg)')
+        ax1.grid(True)
+        ax1.legend()
+        
+        # Error histogram
+        ax2.hist(pos_error, bins=50, density=True)
+        ax2.set_xlabel('Position Error (deg)')
+        ax2.set_ylabel('Density')
+        ax2.grid(True)
+        
+        # Add error statistics
+        stats_text = (
+            f"RMS Error: {np.sqrt(np.mean(pos_error**2)):.2f}°\n"
+            f"Mean Error: {np.mean(pos_error):.2f}°\n"
+            f"Max Error: {np.max(np.abs(pos_error)):.2f}°"
+        )
+        ax2.text(0.95, 0.95, stats_text, 
+                transform=ax2.transAxes,
+                verticalalignment='top',
+                horizontalalignment='right',
+                bbox=dict(facecolor='white', alpha=0.8))
+        
+        plt.tight_layout()
+        plt.savefig(f"{save_path}_error.png")
+        plt.close()

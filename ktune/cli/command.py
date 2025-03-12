@@ -1,9 +1,16 @@
 # ktune/ktune/cli/commands.py
+import os
+import json
+from datetime import datetime
 import click
 import yaml
 from typing import Optional, Dict
 from ktune.config.validation import ConfigValidator
 from ktune.core.tune import Tune
+from ktune.core.sysid.testbed.pendulum import PendulumBench, PendulumConfig
+from ktune.core.utils import metrics
+from pykos import KOS
+import numpy as np
 
 @click.group()
 def cli():
@@ -157,6 +164,107 @@ def version():
     """Show the version of KTune"""
     import ktune
     click.echo(f"ktune v{ktune.__version__}")
+
+    pass
+
+
+@cli.group()
+def sysid():
+    """Run system identification experiments"""
+    pass
+
+@sysid.command()
+@click.option('--config', type=click.Path(exists=True), help='Path to config file')
+@click.option('--ip', default="192.168.42.1", help='KOS IP address')
+@click.option('--actuator-id', type=int, default=11, help='Actuator ID to test')
+# Motor parameters
+@click.option('--motor-name', default="sts3215", help='Motor model name')
+@click.option('--winding-resistance', type=float, default=2.1, help='Motor winding resistance (ohms)')
+@click.option('--torque-constant', type=float, default=0.0955, help='Motor torque constant (Nm/A)')
+# Control parameters
+@click.option('--kp', type=float, default=32.0, help='Position gain')
+@click.option('--error-gain', type=float, default=1.0, help='Error gain for system ID')
+# Pendulum parameters
+@click.option('--mass', type=float, required=True, help='Pendulum mass (kg)')
+@click.option('--length', type=float, required=True, help='Pendulum length (m)')
+# Test configuration
+@click.option('--trajectory', type=str, required=True,
+              help='Trajectory type: lift_and_drop, sin_time_square, up_and_down, sin_sin, brutal, nothing')
+@click.option('--sample-rate', type=float, default=100.0, help='Data collection rate (Hz)')
+@click.pass_context
+def pendulum(ctx, **kwargs):
+    """Run pendulum system identification experiment"""
+    # Store configuration in context
+    ctx.ensure_object(dict)
+    
+    # Initialize configuration
+    cfg = {'sysid': {}}
+
+    # Load config file if provided
+    if kwargs.get('config'):
+        try:
+            with open(kwargs['config']) as f:
+                cfg = yaml.safe_load(f)
+        except (yaml.YAMLError, IOError) as e:
+            click.echo(f"Error loading config file: {e}", err=True)
+            raise click.Abort()
+
+    # Update config with CLI arguments
+    cfg.setdefault('sysid', {}).update(kwargs)
+
+    # Validate and run
+    _validate_and_run_sysid(cfg)
+
+def _validate_and_run_sysid(config: Dict):
+    """Helper function to validate config and run sysid experiment"""
+    try:
+        cfg = config['sysid']
+
+        kos = KOS(cfg['ip'])
+        
+        # Create pendulum config
+        pendulum_config = PendulumConfig(
+            motor=cfg['motor_name'],
+            actuator_id=cfg['actuator_id'],
+            ip=cfg['ip'],  # Make sure we pass IP from CLI args
+            mass=cfg['mass'],
+            length=cfg['length'],
+            kp=cfg['kp'],
+            max_torque=cfg.get('max_torque', 100.0),
+            acceleration=0.0,  # Fixed for pendulum experiments
+            sample_rate=cfg.get('sample_rate', 100.0),
+            vin=cfg.get('vin', 15.0),
+            offset=cfg.get('offset', 0.0)
+        )
+
+        # Initialize bench
+        bench = PendulumBench(pendulum_config)
+        
+        # Run experiment and save data
+        data = bench.run_experiment(cfg['trajectory'])  # Let PendulumBench handle async
+        
+        # Add motor parameters to data
+        data['motor_params'] = {
+            'name': cfg['motor_name'],
+            'winding_resistance': cfg['winding_resistance'],
+            'torque_constant': cfg['torque_constant']
+        }
+        
+        # Save data
+        os.makedirs('logs', exist_ok=True)
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        filename = f"logs/sysid_{cfg['motor_name']}_{cfg['trajectory']}_{timestamp}.json"
+        
+        with open(filename, 'w') as f:
+            json.dump(data, f)
+            
+        click.echo(f"Data saved to {filename}")
+
+    except Exception as e:
+        import traceback
+        print(f"Exception details:\n{traceback.format_exc()}")
+        click.echo(f"Error running experiment: {e}", err=True)
+        raise click.Abort()
 
 if __name__ == '__main__':
     cli()

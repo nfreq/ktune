@@ -1,6 +1,9 @@
 import numpy as np
 from scipy.signal import coherence, csd
 from scipy.interpolate import interp1d
+from pathlib import Path
+import json
+from typing import Dict
 
 def compute_tracking_metrics(cmd_time, cmd_pos, actual_time, actual_pos, cmd_vel=None, actual_vel=None):
     """Compute tracking metrics between commanded and actual values.
@@ -316,3 +319,35 @@ def compute_step_metrics(time_array, pos_array, step_size, hold_time, step_count
         step_metrics.append(metrics)
 
     return step_metrics
+
+def analyze_sysid_data(data: Dict) -> Dict:
+    """Analyze system identification data quality
+    
+    Args:
+        data: Dictionary containing experiment data and config
+    """
+    # Extract timestamps and convert to numpy array
+    timestamps = np.array([entry['timestamp'] for entry in data['entries']])
+    dt = np.diff(timestamps)
+    
+    metrics = {
+        # Sampling statistics
+        'total_samples': len(timestamps),
+        'duration': timestamps[-1] - timestamps[0],
+        'dt_mean': np.mean(dt),
+        'dt_std': np.std(dt),
+        'dt_min': np.min(dt),
+        'dt_max': np.max(dt),
+        'actual_rate': 1.0/np.mean(dt),
+        'target_rate': data['sample_rate'],
+        
+        # Data completeness
+        'missing_samples': sum(dt > (2.0 * np.mean(dt))),  # Gaps > 2x mean dt
+        
+        # Trajectory info
+        'trajectory_type': data['trajectory'],
+    }
+    
+    return metrics
+    
+    return metrics
