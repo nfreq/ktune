@@ -185,16 +185,14 @@ def sysid():
 @click.option('--kp', type=float, default=32.0, help='Position gain')
 @click.option('--error-gain', type=float, default=1.0, help='Error gain for system ID')
 # Pendulum parameters
-@click.option('--mass', type=float, required=True, help='Pendulum mass (kg)')
-@click.option('--length', type=float, required=True, help='Pendulum length (m)')
+@click.option('--mass', type=float, help='Pendulum mass (kg)')  # Removed required=True
+@click.option('--length', type=float, help='Pendulum length (m)')  # Removed required=True
 # Test configuration
-@click.option('--trajectory', type=str, required=True,
-              help='Trajectory type: lift_and_drop, sin_time_square, up_and_down, sin_sin, brutal, nothing')
+@click.option('--trajectory', type=str, help='Trajectory type: lift_and_drop, sin_time_square, up_and_down, sin_sin, brutal, nothing')
 @click.option('--sample-rate', type=float, default=100.0, help='Data collection rate (Hz)')
 @click.pass_context
 def pendulum(ctx, **kwargs):
     """Run pendulum system identification experiment"""
-    # Store configuration in context
     ctx.ensure_object(dict)
     
     # Initialize configuration
@@ -209,11 +207,45 @@ def pendulum(ctx, **kwargs):
             click.echo(f"Error loading config file: {e}", err=True)
             raise click.Abort()
 
-    # Update config with CLI arguments
-    cfg.setdefault('sysid', {}).update(kwargs)
+    base_config = cfg.get('sysid', {})
+    
+    # Update config with CLI arguments (CLI args take precedence)
+    base_config.update({k: v for k, v in kwargs.items() if v is not None})
+    
+    # Verify required parameters are present either in config or CLI
+    required_params = ['mass', 'length']
+    missing_params = [param for param in required_params if param not in base_config]
+    if missing_params:
+        click.echo(f"Error: Missing required parameters: {', '.join(missing_params)}", err=True)
+        raise click.Abort()
+    
+    # If using config file with multiple tests
+    if 'trajectories' in base_config and 'kp_values' in base_config:
+        trajectories = base_config.get('trajectories', [])
+        kp_values = base_config.get('kp_values', [])
+        repetitions = base_config.get('repetitions', 1)
 
-    # Validate and run
-    _validate_and_run_sysid(cfg)
+        for trajectory in trajectories:
+            for kp in kp_values:
+                for rep in range(repetitions):
+                    click.echo(f"Running test: trajectory={trajectory}, kp={kp}, repetition={rep+1}/{repetitions}")
+                    
+                    # Create test config with current parameters
+                    test_config = {'sysid': base_config.copy()}
+                    test_config['sysid']['trajectory'] = trajectory
+                    test_config['sysid']['kp'] = kp
+                    
+                    # Run the test
+                    _validate_and_run_sysid(test_config)
+    
+    # If using CLI parameters or simple config file
+    else:
+        # Update config with CLI arguments (CLI args take precedence)
+        base_config.update({k: v for k, v in kwargs.items() if v is not None})
+        cfg['sysid'] = base_config
+        
+        # Validate and run single test
+        _validate_and_run_sysid(cfg)
 
 def _validate_and_run_sysid(config: Dict):
     """Helper function to validate config and run sysid experiment"""

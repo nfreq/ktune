@@ -1,47 +1,26 @@
-# full_config.yaml
-tune:
-  name: "PendulumTest"
-  connection:
-    sim_ip: "127.0.0.1"
-    real_ip: "192.168.42.1"
+sysid:
+  # Hardware configuration
+  actuator_id: 11
+  motor_name: "sts3215v12"
+  ip: "192.168.42.1"
+  
+  # Pendulum parameters
+  # Mass is in kg
+  # Length is in meters
+  mass: 0.453592
+  length: 0.150846
+  
+  # Motor parameters
+  error_gain: 1.0
+  winding_resistance: 2.1
+  torque_constant: 0.0955
+  
+  # Test configuration
+  repetitions: 3
+  kp_values: [4, 8, 16, 32]
+  trajectories: 
+    - "lift_and_drop"
+    - "sin_sin"
+    - "up_and_down"
 
-motor:
-  type: "sts3215"
-  id: 11
-  error_gain: 0.165
-  winding_resistance: 5.5
-  torque_constant: 2.5
-    limits:
-    position:
-      min: -90
-      max: 90
-    velocity: 180
-    torque: 100
-  gains:
-    kp: 32.0
-    kd: 0.0
-    ki: 0.0
-
-testbed:
-  type: "pendulum"
-  pendulum:
-    mass: 0.5
-    length: 0.3
-    zero_position: 0.0
-  trajectories:
-    - name: "identification_sine"
-      type: "sine"
-      parameters:
-        amplitude: 45
-        frequency: 0.5
-        duration: 10
-      safety:
-        max_position: 60
-        max_velocity: 180
-    - name: "identification_chirp"
-      type: "chirp"
-      parameters:
-        amplitude: 30
-        frequency: 0.1
-        sweep_rate: 0.05
-        duration: 20
+ 
