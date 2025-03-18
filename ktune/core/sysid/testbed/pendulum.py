@@ -7,6 +7,7 @@ import asyncio
 from typing import Dict
 from datetime import datetime
 from ktune.core.utils.plots import PendulumPlot
+from ktune.core.utils.filters import detect_and_filter_spikes
 from ktune.core.utils import metrics
 from pathlib import Path
 
@@ -16,7 +17,7 @@ class PendulumConfig(TestConfig):
     motor: str
     mass: float
     length: float
-    vin: float = 15.0
+    vin: float = 12.0
     offset: float = 0.0  # Radians, offset from motor zero to pendulum bottom
     sample_rate: float = 100.0
 
@@ -46,7 +47,7 @@ class PendulumTrajectory:
         raise NotImplementedError
 
 class LiftAndDrop(PendulumTrajectory):
-    duration = 8.0
+    duration = 6.0
     def __call__(self, t: float):
         keyframes = [[0.0, 0.0, 0.0], [2.0, -np.pi/2, 0.0]]
         angle = self.cubic_interpolate(keyframes, t)
@@ -89,10 +90,12 @@ class SinSin(PendulumTrajectory):
         modulation = np.sin(5.0 * t) * 0.5 * np.sin(t * 2.0)
         # Combined motion
         raw_angle = base_motion + modulation
+
+         # Scale factor so max angle is ~96 deg
+        scale = 0.828  # from (96 deg) / (115.88 deg)
+
         # Scale to ±90 degrees (±π/2 radians)
-        # Max amplitude of base_motion is 1.0, modulation is 0.5
-        # So max possible amplitude is 1.5
-        angle = raw_angle * (np.pi/2) / 1.5
+        angle = raw_angle * (np.pi/2) * scale #(prevent disc mass from hitting testbench frame)
         return angle, True
 
 class Brutal(PendulumTrajectory):
@@ -103,6 +106,7 @@ class Brutal(PendulumTrajectory):
         return 0.0, True
 
 class Nothing(PendulumTrajectory):
+    duration = 3.0
     def __call__(self, t: float):
         return 0.0, False
     
@@ -134,10 +138,8 @@ class PendulumBench(TestBench):
 
     def get_safety_limits(self) -> dict:
         return {
-            "position_min": -np.pi/2,
-            "position_max": np.pi/2,
-            "velocity_max": np.deg2rad(3000),  # 3000 deg/s
-            "acceleration_max": np.deg2rad(2250)  # 2250 deg/s^2
+            "position_min": -np.deg2rad(96.5),
+            "position_max": np.deg2rad(96.5)
         }
     
     def validate_trajectory(self, trajectory, dt=0.01) -> bool:
@@ -152,8 +154,6 @@ class PendulumBench(TestBench):
         """
         limits = self.get_safety_limits()
         t = 0.0
-        prev_pos = None
-        prev_vel = None
         
         while t <= trajectory.duration:
             pos, _ = trajectory(t)
@@ -167,27 +167,6 @@ class PendulumBench(TestBench):
                     f"{np.rad2deg(limits['position_max']):.1f}°)"
                 )
                 
-            # Compute velocity and acceleration using finite differences
-            if prev_pos is not None:
-                vel = (pos - prev_pos) / dt
-                if abs(vel) > limits["velocity_max"]:
-                    raise ValueError(
-                        f"Velocity limit exceeded at t={t:.2f}s: "
-                        f"{np.rad2deg(vel):.1f}°/s (limit: ±"
-                        f"{np.rad2deg(limits['velocity_max']):.1f}°/s)"
-                    )
-                    
-                if prev_vel is not None:
-                    acc = (vel - prev_vel) / dt
-                    if abs(acc) > limits["acceleration_max"]:
-                        raise ValueError(
-                            f"Acceleration limit exceeded at t={t:.2f}s: "
-                            f"{np.rad2deg(acc):.1f}°/s² (limit: ±"
-                            f"{np.rad2deg(limits['acceleration_max']):.1f}°/s²)"
-                        )
-                        
-                prev_vel = vel
-            prev_pos = pos
             t += dt
             
         return True
@@ -204,7 +183,7 @@ class PendulumBench(TestBench):
             "position": np.deg2rad(float(state.position)),
             "speed": np.deg2rad(float(state.velocity)),
             "torque": float(state.torque),
-            "volts": float(state.voltage) * 0.1,
+            "input_volts": float(state.voltage),
             "temp": float(state.temperature),
             "current": float(state.current),
             "load": 0
@@ -231,6 +210,21 @@ class PendulumBench(TestBench):
             raise ValueError(f"Unknown trajectory: {trajectory_name}. " +
                            f"Available trajectories: {list(self.trajectories.keys())}")
         
+        trajectory = self.trajectories[trajectory_name]
+
+        if not self.validate_trajectory(trajectory):
+            raise ValueError("Trajectory is not safe. Please adjust the trajectory.")
+      
+        await asyncio.sleep(1)
+        current_state = await self.read_state()
+        current_position = current_state['position']
+        await self.command_state({"position": current_position})
+        await asyncio.sleep(1)
+
+        current_position = current_state['position']
+        start_position = 0.0 +self.config.offset
+        print(np.rad2deg(current_position))
+
         # Configure actuator
         await self.kos.actuator.configure_actuator(
             actuator_id=self.config.actuator_id,
@@ -245,16 +239,13 @@ class PendulumBench(TestBench):
         current_torque_state = True
         print("Torque enabled:", current_torque_state)
 
-        trajectory = self.trajectories[trajectory_name]
-
-        if not self.validate_trajectory(trajectory):
-            raise ValueError("Trajectory is not safe. Please adjust the trajectory.")
-        
-
         # Move to starting position smoothly
-        start_position = trajectory(0)[0] + np.deg2rad(self.config.offset)  # Get initial position from trajectory
+        #start_position = trajectory(0)[0] + np.deg2rad(self.config.offset)  # Get initial position from trajectory
+
         current_state = await self.read_state()
         current_position = current_state['position']
+        start_position = 0.0 +self.config.offset
+        print(np.rad2deg(current_position))
         
         # Create keyframes for smooth motion to start position (2 second move)
         move_duration = 3.0
@@ -263,7 +254,7 @@ class PendulumBench(TestBench):
             [move_duration, start_position, 0.0]
         ]
 
-        print(f"Moving to start position {np.rad2deg(start_position):.1f} degrees...")
+        print(f"Moving from {np.rad2deg(current_position)} to start position {np.rad2deg(start_position):.1f} degrees...")
         start_time = asyncio.get_running_loop().time()
         dt = 1.0 / self.config.sample_rate
         
@@ -296,23 +287,32 @@ class PendulumBench(TestBench):
 
             "entries": []
         }
-        
+
         
         start_time = asyncio.get_running_loop().time()
         next_sample_time = start_time
         current_torque_state = True  # Track current torque state
-        
+
+       
+
         print(f"Running experiment for {trajectory.duration} seconds")
         while asyncio.get_running_loop().time() - start_time < trajectory.duration:
             t = asyncio.get_running_loop().time() - start_time
             goal_position, torque_enable = trajectory(t)
             
-            if torque_enable != current_torque_state:
+            # Hack for Lift and Drop and (bug in KOS)
+            if trajectory_name == "lift_and_drop" and not torque_enable:
+                await self.kos.actuator.configure_actuator(
+                    actuator_id=self.config.actuator_id,
+                    torque_enabled=False
+                )
+            elif torque_enable != current_torque_state:
                 await self.kos.actuator.configure_actuator(
                     actuator_id=self.config.actuator_id,
                     torque_enabled=torque_enable
                 )
                 print("Torque enabled:", torque_enable)
+                await asyncio.sleep(0.1)
                 current_torque_state = torque_enable
                 
             await self.command_state({"position": goal_position + self.config.offset})
@@ -330,8 +330,32 @@ class PendulumBench(TestBench):
             if sleep_time > 0:
                 await asyncio.sleep(sleep_time)
             else:
-                print(f"Warning: Falling behind schedule by {-sleep_time*1000:.1f}ms")
+                if -sleep_time*1000.0 > 2.0:
+                    print(f"Warning: Falling behind schedule by {-sleep_time*1000:.1f}ms")
             
+
+        # Filter out Position and Velocity spikes
+        if len(data["entries"]) > 0:
+            # Extract time series data
+            times = np.array([entry["timestamp"] for entry in data["entries"]])
+            positions = np.array([entry["position"] for entry in data["entries"]])
+            velocities = np.array([entry["speed"] for entry in data["entries"]])
+            
+            # Convert to degrees for filtering
+            positions_deg = np.rad2deg(positions)
+            velocities_deg = np.rad2deg(velocities)
+            
+            # Filter spikes
+            filtered_pos_deg, filtered_vel_deg = detect_and_filter_spikes(
+                positions_deg, 
+                velocities_deg, 
+                times
+            )
+            
+            # Convert back to radians and update data
+            for i, entry in enumerate(data["entries"]):
+                entry["position"] = np.deg2rad(filtered_pos_deg[i])
+                entry["speed"] = np.deg2rad(filtered_vel_deg[i])
 
         # Analyze data quality
         data_metrics = metrics.analyze_sysid_data(data)
