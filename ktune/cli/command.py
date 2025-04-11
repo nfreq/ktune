@@ -17,38 +17,73 @@ def cli():
     """KTune - Motor tuning and system identification toolkit"""
     pass
 
-@cli.group()
-@click.option('--config', type=click.Path(exists=True), help='Path to config file')
-@click.option('--name', default="Zeroth01", help='Name for plot titles')
-@click.option('--sim-ip', default="127.0.0.1", help='Simulator KOS IP address')
-@click.option('--real-ip', default="192.168.42.1", help='Real robot KOS IP address')
-@click.option('--actuator-id', type=int, default=11, help='Actuator ID to test')
-@click.option('--start-pos', type=float, default=0.0, help='Start position (degrees)')
-# Actuator config
-@click.option('--kp', type=float, default=20.0, help='Proportional gain')
-@click.option('--kd', type=float, default=55.0, help='Derivative gain')
-@click.option('--ki', type=float, default=0.01, help='Integral gain')
-@click.option('--acceleration', type=float, default=0.0, help='Acceleration (deg/s^2)')
-@click.option('--max-torque', type=float, default=100.0, help='Max torque')
-@click.option('--torque-off', is_flag=True, help='Disable torque for test?')
-# Simulation gains
-@click.option('--sim-kp', type=float, default=24.0, help='Simulation proportional gain')
-@click.option('--sim-kv', type=float, default=0.75, help='Simulation damping gain')
-# Data logging
-@click.option('--no-log', is_flag=True, help='Do not record/plot data')
-@click.option('--log-duration-pad', type=float, default=2.0,
-              help='Pad (seconds) after motion ends to keep logging')
-@click.option('--sample-rate', type=float, default=100.0, help='Data collection rate (Hz)')
-# Servo Enable/Disable
-@click.option('--enable-servos', help='Comma delimited list of servo IDs to enable (e.g., 11,12,13)')
-@click.option('--disable-servos', help='Comma delimited list of servo IDs to disable (e.g., 31,32,33)')
-@click.pass_context
-def tune(ctx, **kwargs):
-    """Run tuning tests"""
-    # Store configuration in context for subcommands
+def create_mode_command(mode: str):
+    """Create a command decorator with mode-specific options"""
+    def decorator(f):
+        # Add common options first
+        f = add_common_options(f)
+        
+        # Add mode-specific options
+        if mode == 'compare':
+            f = click.option('--sim-ip', default="127.0.0.1", help='Simulator KOS IP address')(f)
+            f = click.option('--real-ip', default="192.168.42.1", help='Real robot KOS IP address')(f)
+            f = click.option('--sim-kp', type=float, default=24.0, help='Simulation proportional gain')(f)
+            f = click.option('--sim-kv', type=float, default=0.75, help='Simulation damping gain')(f)
+        elif mode == 'real':
+            f = click.option('--ip', default="192.168.42.1", help='Real robot KOS IP address')(f)
+        elif mode == 'sim':
+            f = click.option('--sim-ip', default="127.0.0.1", help='Simulator KOS IP address')(f)
+            f = click.option('--sim-kp', type=float, default=24.0, help='Simulation proportional gain')(f)
+            f = click.option('--sim-kv', type=float, default=0.75, help='Simulation damping gain')(f)
+        return f
+    return decorator
+
+def create_test_command(test_type: str):
+    """Create a command decorator with test-specific options"""
+    def decorator(f):
+        if test_type == 'sine':
+            f = click.option('--freq', type=float, default=1.0, help='Sine frequency (Hz)')(f)
+            f = click.option('--amp', type=float, default=5.0, help='Sine amplitude (degrees)')(f)
+            f = click.option('--duration', type=float, default=5.0, help='Duration (seconds)')(f)
+        elif test_type == 'step':
+            f = click.option('--step-size', type=float, default=10.0, help='Step size (degrees)')(f)
+            f = click.option('--step-hold-time', type=float, default=3.0, help='Hold time (seconds)')(f)
+            f = click.option('--step-count', type=int, default=2, help='Number of steps')(f)
+        elif test_type == 'chirp':
+            f = click.option('--chirp-amp', type=float, default=5.0, help='Chirp amplitude (degrees)')(f)
+            f = click.option('--chirp-init-freq', type=float, default=1.0, help='Initial frequency (Hz)')(f)
+            f = click.option('--chirp-sweep-rate', type=float, default=0.5, help='Sweep rate (Hz/s)')(f)
+            f = click.option('--chirp-duration', type=float, default=5.0, help='Duration (seconds)')(f)
+        return f
+    return decorator
+
+def add_common_options(command):
+    """Add common options to a command group"""
+    options = [
+        click.option('--config', type=click.Path(exists=True), help='Path to config file'),
+        click.option('--name', default="NoName", help='Name for plot titles'),
+        click.option('--actuator-id', type=int, default=11, help='Actuator ID to test'),
+        click.option('--start-pos', type=float, default=0.0, help='Start position (degrees)'),
+        click.option('--kp', type=float, default=20.0, help='Proportional gain'),
+        click.option('--kd', type=float, default=55.0, help='Derivative gain'),
+        click.option('--ki', type=float, default=0.01, help='Integral gain'),
+        click.option('--acceleration', type=float, default=0.0, help='Acceleration (deg/s^2)'),
+        click.option('--max-torque', type=float, default=100.0, help='Max torque'),
+        click.option('--torque-off', is_flag=True, help='Disable torque for test?'),
+        click.option('--no-log', is_flag=True, help='Do not record/plot data'),
+        click.option('--log-duration-pad', type=float, default=2.0,
+                    help='Pad (seconds) after motion ends to keep logging'),
+        click.option('--sample-rate', type=float, default=100.0, help='Data collection rate (Hz)'),
+        click.option('--enable-servos', help='Comma delimited list of servo IDs to enable'),
+        click.option('--disable-servos', help='Comma delimited list of servo IDs to disable')
+    ]
+    for option in options:
+        command = option(command)
+    return command
+
+def _handle_common_setup(ctx, kwargs, mode):
+    """Common setup for all modes"""
     ctx.ensure_object(dict)
-    
-    # Initialize configuration
     cfg = {'tune': {}}
 
     # Load config file if provided
@@ -62,85 +97,88 @@ def tune(ctx, **kwargs):
 
     # Process servo lists
     if kwargs.get('enable_servos'):
-        kwargs['enable_servos'] = [
-            int(x.strip()) for x in kwargs['enable_servos'].split(',')
-        ]
+        kwargs['enable_servos'] = [int(x.strip()) for x in kwargs['enable_servos'].split(',')]
     if kwargs.get('disable_servos'):
-        kwargs['disable_servos'] = [
-            int(x.strip()) for x in kwargs['disable_servos'].split(',')
-        ]
+        kwargs['disable_servos'] = [int(x.strip()) for x in kwargs['disable_servos'].split(',')]
 
+    # Add mode to config
+    kwargs['mode'] = mode
+    
     # Store processed kwargs in context
     ctx.obj['config'] = cfg
     ctx.obj['cli_args'] = {k: v for k, v in kwargs.items() if v is not None}
 
-@tune.command()
-@click.option('--freq', type=float, default=1.0, help='Sine frequency (Hz)')
-@click.option('--amp', type=float, default=5.0, help='Sine amplitude (degrees)')
-@click.option('--duration', type=float, default=5.0, help='Duration (seconds)')
-@click.pass_context
-def sine(ctx, **kwargs):
-    """Run sine wave test"""
-    config = ctx.obj['config']
-    cli_args = ctx.obj['cli_args']
+def handle_test(ctx, kwargs, mode: str, test_type: str):
+    """Common handler for all test commands"""
+    _handle_common_setup(ctx, kwargs, mode=mode)
+    ctx.obj['config'].setdefault('tune', {}).update(ctx.obj['cli_args'])
+    ctx.obj['config']['tune']['test'] = test_type
+    _validate_and_run(ctx.obj['config'])
 
-    # Add sine-specific parameters
-    cli_args['test'] = 'sine'
-    cli_args['freq'] = kwargs['freq']
-    cli_args['amp'] = kwargs['amp']
-    cli_args['duration'] = kwargs['duration']
+# Define the mode groups
+@cli.group()
+def compare():
+    """Run comparison tests between real and simulated systems"""
+    pass
 
-    # Update config with CLI arguments
-    config.setdefault('tune', {}).update(cli_args)
+@cli.group()
+def real():
+    """Run tests on real hardware only"""
+    pass
 
-    # Validate and run
-    _validate_and_run(config)
+@cli.group()
+def sim():
+    """Run tests on simulator only"""
+    pass
 
-@tune.command()
-@click.option('--size', type=float, default=10.0, help='Step size (degrees)')
-@click.option('--hold-time', type=float, default=3.0, help='Hold time (seconds)')
-@click.option('--count', type=int, default=2, help='Number of steps')
-@click.pass_context
-def step(ctx, **kwargs):
-    """Run step response test"""
-    config = ctx.obj['config']
-    cli_args = ctx.obj['cli_args']
+for mode_group in [compare, real, sim]:
+    @mode_group.command(name='enable')
+    @click.argument('servo_ids', nargs=-1, type=int, required=True)
+    @click.pass_context
+    def enable_servos(ctx, servo_ids):
+        """Enable specified servo IDs"""
+        config = {'tune': {'mode': ctx.parent.command.name, 'enable_servos': list(servo_ids)}}
+        _validate_and_run(config)
 
-    # Add step-specific parameters
-    cli_args['test'] = 'step'
-    cli_args['step_size'] = kwargs['size']
-    cli_args['step_hold_time'] = kwargs['hold_time']
-    cli_args['step_count'] = kwargs['count']
+    @mode_group.command(name='disable')
+    @click.argument('servo_ids', nargs=-1, type=int, required=True)
+    @click.pass_context
+    def disable_servos(ctx, servo_ids):
+        """Disable specified servo IDs"""
+        config = {'tune': {'mode': ctx.parent.command.name, 'disable_servos': list(servo_ids)}}
+        _validate_and_run(config)
 
-    # Update config with CLI arguments
-    config.setdefault('tune', {}).update(cli_args)
+# Define test commands for each mode
+for mode_group, mode_name, mode_desc in [
+    (compare, 'compare', 'comparison test'),
+    (real, 'real', 'real hardware test'),
+    (sim, 'sim', 'simulator test')
+]:
+    @mode_group.command(name='sine')
+    @create_mode_command(mode_name)
+    @create_test_command('sine')
+    @click.pass_context
+    def sine(ctx, **kwargs):
+        f"""Run sine wave {mode_desc}"""
+        handle_test(ctx, kwargs, mode_name, 'sine')
 
-    # Validate and run
-    _validate_and_run(config)
+    @mode_group.command(name='step')
+    @create_mode_command(mode_name)
+    @create_test_command('step')
+    @click.pass_context
+    def step(ctx, **kwargs):
+        f"""Run step response {mode_desc}"""
+        handle_test(ctx, kwargs, mode_name, 'step')
 
-@tune.command()
-@click.option('--amp', type=float, default=5.0, help='Chirp amplitude (degrees)')
-@click.option('--init-freq', type=float, default=1.0, help='Initial frequency (Hz)')
-@click.option('--sweep-rate', type=float, default=0.5, help='Sweep rate (Hz/s)')
-@click.option('--duration', type=float, default=5.0, help='Duration (seconds)')
-@click.pass_context
-def chirp(ctx, **kwargs):
-    """Run chirp test"""
-    config = ctx.obj['config']
-    cli_args = ctx.obj['cli_args']
+    @mode_group.command(name='chirp')
+    @create_mode_command(mode_name)
+    @create_test_command('chirp')
+    @click.pass_context
+    def chirp(ctx, **kwargs):
+        f"""Run chirp {mode_desc}"""
+        handle_test(ctx, kwargs, mode_name, 'chirp')
 
-    # Add chirp-specific parameters
-    cli_args['test'] = 'chirp'
-    cli_args['chirp_amp'] = kwargs['amp']
-    cli_args['chirp_init_freq'] = kwargs['init_freq']
-    cli_args['chirp_sweep_rate'] = kwargs['sweep_rate']
-    cli_args['chirp_duration'] = kwargs['duration']
 
-    # Update config with CLI arguments
-    config.setdefault('tune', {}).update(cli_args)
-
-    # Validate and run
-    _validate_and_run(config)
 
 def _validate_and_run(config: Dict):
     """Helper function to validate config and run tune"""
@@ -157,7 +195,12 @@ def _validate_and_run(config: Dict):
 
     # Initialize and run tuner
     ktune = Tune(config)
-    ktune.run_test(config['tune'].get('test'))
+    
+    # If we're just enabling/disabling servos, don't try to run a test
+    if 'enable_servos' in config['tune'] or 'disable_servos' in config['tune']:
+        ktune.run_test(None)  # This will just do the setup and servo operations
+    else:
+        ktune.run_test(config['tune'].get('test'))
 
 @cli.command()
 def version():
@@ -175,7 +218,7 @@ def sysid():
 
 @sysid.command()
 @click.option('--config', type=click.Path(exists=True), help='Path to config file')
-@click.option('--ip', default="192.168.42.1", help='KOS IP address')
+@click.option('--ip', help='KOS IP address')
 @click.option('--actuator-id', type=int, default=11, help='Actuator ID to test')
 # Motor parameters
 @click.option('--motor-name', default="sts3215", help='Motor model name')
@@ -209,8 +252,9 @@ def pendulum(ctx, **kwargs):
 
     base_config = cfg.get('sysid', {})
     
-    # Update config with CLI arguments (CLI args take precedence)
-    base_config.update({k: v for k, v in kwargs.items() if v is not None})
+    # Update with CLI args, excluding config file path
+    cli_args = {k: v for k, v in kwargs.items() if k != 'config' and v is not None}
+    base_config.update(cli_args)
     
     # Verify required parameters are present either in config or CLI
     required_params = ['mass', 'length']

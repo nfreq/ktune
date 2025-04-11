@@ -23,12 +23,13 @@ logging.getLogger().setLevel(logging.ERROR)
 class TuneConfig:
     """Configuration for tuning tests"""
     # Connection settings
-    name: str = "Zeroth01"
+    name: str = "NoName"
+    mode: str = "compare"  # Add mode parameter with default
     sim_ip: str = "127.0.0.1"
     real_ip: str = "192.168.42.1"
     actuator_id: int = 11
     start_pos: float = 0.0
-
+    
     # Actuator gains
     kp: float = 20.0
     kd: float = 55.0
@@ -72,43 +73,55 @@ class Tune:
     def __init__(self, config: Dict):
         tune_config = config.get('tune', {})
         self.config = TuneConfig(**tune_config)
+        self.mode = tune_config.get('mode', 'compare')  # Get mode from config
         
-        self.sim_data = {
-            "time": [], "position": [], "velocity": [],
-            "cmd_time": [], "cmd_pos": [], "cmd_vel": []
-        }
-        self.real_data = {
-            "time": [], "position": [], "velocity": [],
-            "cmd_time": [], "cmd_pos": [], "cmd_vel": []
-        }
+        # Initialize data storage based on mode
+        self.sim_data = None
+        self.real_data = None
+        
+        if self.mode in ['compare', 'sim']:
+            self.sim_data = {
+                "time": [], "position": [], "velocity": [],
+                "cmd_time": [], "cmd_pos": [], "cmd_vel": []
+            }
+        if self.mode in ['compare', 'real']:
+            self.real_data = {
+                "time": [], "position": [], "velocity": [],
+                "cmd_time": [], "cmd_pos": [], "cmd_vel": []
+            }
+
 
     async def setup_connections(self):
-        """Initialize and test connections to real and simulated systems"""
-        print("Testing KOS-SIM connection performance...")
-        self.sim_kos = KOS(self.config.sim_ip)
-        sim_start = time.time()
-        for _ in range(100):  # Test 100 samples
-            await self.sim_kos.actuator.get_actuators_state([self.config.actuator_id])
-        sim_end = time.time()
-        sim_rate = 100 / (sim_end - sim_start)
+        """Initialize and test connections based on mode"""
+        if self.mode in ['compare', 'sim']:
+            print("Testing KOS-SIM connection...")
+            # For sim mode, use sim_ip as the connection address
+            sim_ip = self.config.sim_ip
+            self.sim_kos = KOS(sim_ip)
+            sim_start = time.time()
+            for _ in range(100):
+                await self.sim_kos.actuator.get_actuators_state([self.config.actuator_id])
+            sim_rate = 100 / (time.time() - sim_start)
+            print(f"Max KOS-SIM sampling rate: {sim_rate:.1f} Hz")
+                
+        if self.mode in ['compare', 'real']:
+            print("Testing KOS-REAL connection...")
+            # For real mode, use real_ip as the connection address
+            real_ip = self.config.real_ip
+            self.real_kos = KOS(real_ip)
+            real_start = time.time()
+            for _ in range(100):
+                await self.real_kos.actuator.get_actuators_state([self.config.actuator_id])
+            real_rate = 100 / (time.time() - real_start)
+            print(f"Max KOS-REAL sampling rate: {real_rate:.1f} Hz")
 
-        print("Testing KOS-REAL connection performance...")
-        self.real_kos = KOS(self.config.real_ip)
-        real_start = time.time()
-        for _ in range(100):  # Test 100 samples
-            await self.real_kos.actuator.get_actuators_state([self.config.actuator_id])
-        real_end = time.time()
-        real_rate = 100 / (real_end - real_start)
-
-        print(f"Max KOS-SIM sampling rate: {sim_rate:.1f} Hz")
-        print(f"Max KOS-REAL sampling rate: {real_rate:.1f} Hz")
         print(f"Required sampling rate: {self.config.sample_rate} Hz")
-
-        if sim_rate < self.config.sample_rate or real_rate < self.config.sample_rate:
+        if ((self.mode in ['compare', 'sim'] and sim_rate < self.config.sample_rate) or
+            (self.mode in ['compare', 'real'] and real_rate < self.config.sample_rate)):
             raise ValueError(
                 f"Requested sampling rate ({self.config.sample_rate} Hz) exceeds "
-                "maximum achievable rates. Try re-running kos-sim --no-render or "
-                "reduce the sampling rate and try again"
+                "maximum achievable rates. Try re-running with --no-render or "
+                "reduce the sampling rate"
             )
         
     def _print_test_config(self):
@@ -157,17 +170,25 @@ class Tune:
 
     def run_test(self, test_type: Optional[str] = None):
         """Main entry point for running tests"""
-        if test_type is None:
-            test_type = self.config.test
-        if test_type is None:
-            raise ValueError("No test type specified")
+        if test_type is None and not (self.config.enable_servos or self.config.disable_servos):
+            raise ValueError("No test type specified and no servo operations requested")
         
         asyncio.run(self._run_test(test_type))
-        self.save_and_plot_results()
+        
+        # Only save and plot if we ran a test
+        if test_type is not None:
+            self.save_and_plot_results()
 
-    async def _run_test(self, test_type: str):
+    async def _run_test(self, test_type: Optional[str] = None):
         """Async implementation of test execution"""
-        await self.setup_connections()
+        if test_type is not None:
+            await self.setup_connections()
+        else:
+            # Simple connection without sampling rate test
+            if self.mode in ['compare', 'sim']:
+                self.sim_kos = KOS(self.config.sim_ip)
+            if self.mode in ['compare', 'real']:
+                self.real_kos = KOS(self.config.real_ip)
         
         # Configure servos if needed
         if self.config.enable_servos:
@@ -176,6 +197,10 @@ class Tune:
             await self._disable_servos(self.config.disable_servos)
 
         # Run the specified test
+        if test_type is None:
+            print("No test specified, exiting after servo configuration.")
+            return
+            
         if test_type == "sine":
             await self._run_sine_test()
         elif test_type == "step":
@@ -183,24 +208,55 @@ class Tune:
         elif test_type == "chirp":
             await self._run_chirp_test()
         else:
-            raise ValueError(f"Unknown test type: {test_type}")
+            print(f"Unknown test type '{test_type}', exiting.")
+            return
 
         # Clean up connections
-        await self.sim_kos.close()
-        await self.real_kos.close()
+        if hasattr(self, 'sim_kos'):
+            await self.sim_kos.close()
+        if hasattr(self, 'real_kos'):
+            await self.real_kos.close()
 
-    async def _enable_servos(self, servo_ids: List[int]):
-        """Enable specified servos"""
-        for kos in [self.sim_kos, self.real_kos]:
-            await kos.actuator.enable_actuators(servo_ids)
-        print(f"Enabled servos: {servo_ids}")
+    async def _disable_servos(self, servo_ids=None):
+        """Disable servos based on mode"""
+        ids_to_disable = servo_ids if servo_ids else self.config.servo_ids
 
-    async def _disable_servos(self, servo_ids: List[int]):
-        """Disable specified servos"""
-        for kos in [self.sim_kos, self.real_kos]:
-            await kos.actuator.disable_actuators(servo_ids)
-        print(f"Disabled servos: {servo_ids}")
+        if self.mode in ['compare', 'sim']:
+            print("Disabling simulation servos...")
+            for servo_id in ids_to_disable:
+                await self.sim_kos.actuator.configure_actuator(
+                    actuator_id=servo_id,
+                    torque_enabled=False
+                )
+        
+        if self.mode in ['compare', 'real']:
+            print("Disabling real servos...")
+            for servo_id in ids_to_disable:
+                await self.real_kos.actuator.configure_actuator(
+                    actuator_id=servo_id,
+                    torque_enabled=False
+                )
 
+    async def _enable_servos(self, servo_ids=None):
+        """Enable servos based on mode"""
+        ids_to_enable = servo_ids if servo_ids else self.config.servo_ids
+
+        if self.mode in ['compare', 'sim']:
+            print("Enabling simulation servos...")
+            for servo_id in ids_to_enable:
+                await self.sim_kos.actuator.configure_actuator(
+                    actuator_id=servo_id,
+                    torque_enabled=True
+                )
+        
+        if self.mode in ['compare', 'real']:
+            print("Enabling real servos...")
+            for servo_id in ids_to_enable:
+                await self.real_kos.actuator.configure_actuator(
+                    actuator_id=servo_id,
+                    torque_enabled=True
+                )
+                
     def _log_actuator_state(self, response, data_dict, current_time):
         """Log actuator state data with normalized time.
         
@@ -233,8 +289,15 @@ class Tune:
         total_duration = (sum(step[2] for step in steps) + 
                         self.config.log_duration_pad)
 
-        # Configure actuators
-        for kos, is_real in [(self.sim_kos, False), (self.real_kos, True)]:
+        # Configure actuators based on mode
+        kos_configs = []
+        if self.mode in ['compare', 'sim']:
+            kos_configs.append((self.sim_kos, False))
+        if self.mode in ['compare', 'real']:
+            kos_configs.append((self.real_kos, True))
+
+        # Configure each active KOS instance
+        for kos, is_real in kos_configs:
             # Select gains based on system type
             if is_real:
                 kp, kd, ki = (self.config.kp, self.config.kd, self.config.ki)
@@ -250,7 +313,7 @@ class Tune:
             )
 
         # Move to start position and wait
-        for kos in [self.sim_kos, self.real_kos]:
+        for kos, _ in kos_configs:
             await kos.actuator.command_actuators([{
                 'actuator_id': self.config.actuator_id,
                 'position': self.config.start_pos,
@@ -268,15 +331,15 @@ class Tune:
 
             # Determine current step target
             while (step_idx < len(steps) and 
-                   current_time > sum(step[2] for step in steps[:step_idx + 1])):
+                current_time > sum(step[2] for step in steps[:step_idx + 1])):
                 step_idx += 1
 
             if step_idx < len(steps):
                 target_pos = steps[step_idx][0] + self.config.start_pos
 
-                # Command both systems
-                for kos, data_dict in [(self.sim_kos, self.sim_data),
-                                     (self.real_kos, self.real_data)]:
+                # Command active systems
+                for kos, is_real in kos_configs:
+                    data_dict = self.real_data if is_real else self.sim_data
                     # Send command
                     await kos.actuator.command_actuators([{
                         'actuator_id': self.config.actuator_id,
@@ -305,8 +368,15 @@ class Tune:
         # Calculate total duration including padding
         total_duration = self.config.duration + self.config.log_duration_pad
 
-        # Configure actuators
-        for kos, is_real in [(self.sim_kos, False), (self.real_kos, True)]:
+        # Configure actuators based on mode
+        kos_configs = []
+        if self.mode in ['compare', 'sim']:
+            kos_configs.append((self.sim_kos, False))
+        if self.mode in ['compare', 'real']:
+            kos_configs.append((self.real_kos, True))
+
+        # Configure each active KOS instance
+        for kos, is_real in kos_configs:
             # Select gains based on system type
             if is_real:
                 kp, kd, ki = (self.config.kp, self.config.kd, self.config.ki)
@@ -322,7 +392,7 @@ class Tune:
             )
 
         # Move to start position and wait
-        for kos in [self.sim_kos, self.real_kos]:
+        for kos, _ in kos_configs:
             await kos.actuator.command_actuators([{
                 'actuator_id': self.config.actuator_id,
                 'position': self.config.start_pos
@@ -345,9 +415,9 @@ class Tune:
                             self.config.start_pos)
                 target_vel = self.config.amp * omega * math.cos(phase)
 
-                # Command both systems
-                for kos, data_dict in [(self.sim_kos, self.sim_data),
-                                     (self.real_kos, self.real_data)]:
+                # Command active systems
+                for kos, is_real in kos_configs:
+                    data_dict = self.real_data if is_real else self.sim_data
                     # Send command with both position and velocity
                     await kos.actuator.command_actuators([{
                         'actuator_id': self.config.actuator_id,
@@ -368,40 +438,24 @@ class Tune:
 
             await asyncio.sleep(1.0 / self.config.sample_rate)
 
-        # Calculate tracking metrics
-        def compute_tracking_error(cmd_time, cmd_pos, actual_time, actual_pos):
-            """Compute RMS tracking error"""
-            # Interpolate commanded positions to actual timestamps
-            from scipy.interpolate import interp1d
-            cmd_interp = interp1d(cmd_time, cmd_pos, bounds_error=False)
-            cmd_at_actual = cmd_interp(actual_time)
-            
-            # Compute RMS error where we have both commanded and actual
-            valid_idx = ~np.isnan(cmd_at_actual)
-            if not np.any(valid_idx):
-                return float('nan')
-            
-            errors = cmd_at_actual[valid_idx] - np.array(actual_pos)[valid_idx]
-            rms_error = np.sqrt(np.mean(np.square(errors)))
-            return rms_error
+        # Calculate tracking metrics only for active systems
+        if self.mode in ['compare', 'sim']:
+            sim_error = metrics.compute_tracking_error(
+                self.sim_data["cmd_time"],
+                self.sim_data["cmd_pos"],
+                self.sim_data["time"],
+                self.sim_data["position"]
+            )
+            print(f"Sim RMS Error: {sim_error:.3f}°")
 
-        sim_error = compute_tracking_error(
-            self.sim_data["cmd_time"],
-            self.sim_data["cmd_pos"],
-            self.sim_data["time"],
-            self.sim_data["position"]
-        )
-        real_error = compute_tracking_error(
-            self.real_data["cmd_time"],
-            self.real_data["cmd_pos"],
-            self.real_data["time"],
-            self.real_data["position"]
-        )
-
-        # Print results
-        print("\nTest Results:")
-        print(f"Sim RMS Error: {sim_error:.3f}°")
-        print(f"Real RMS Error: {real_error:.3f}°")
+        if self.mode in ['compare', 'real']:
+            real_error = metrics.compute_tracking_error(
+                self.real_data["cmd_time"],
+                self.real_data["cmd_pos"],
+                self.real_data["time"],
+                self.real_data["position"]
+            )
+            print(f"Real RMS Error: {real_error:.3f}°")
 
     async def _run_chirp_test(self):
         """Run chirp test on both sim and real systems"""
@@ -409,8 +463,15 @@ class Tune:
         # Calculate total duration including padding
         total_duration = self.config.chirp_duration + self.config.log_duration_pad
 
-        # Configure actuators
-        for kos, is_real in [(self.sim_kos, False), (self.real_kos, True)]:
+        # Configure actuators based on mode
+        kos_configs = []
+        if self.mode in ['compare', 'sim']:
+            kos_configs.append((self.sim_kos, False))
+        if self.mode in ['compare', 'real']:
+            kos_configs.append((self.real_kos, True))
+
+        # Configure each active KOS instance
+        for kos, is_real in kos_configs:
             # Select gains based on system type
             if is_real:
                 kp, kd, ki = (self.config.kp, self.config.kd, self.config.ki)
@@ -426,7 +487,7 @@ class Tune:
             )
 
         # Move to start position and wait
-        for kos in [self.sim_kos, self.real_kos]:
+        for kos, _ in kos_configs:
             await kos.actuator.command_actuators([{
                 'actuator_id': self.config.actuator_id,
                 'position': self.config.start_pos
@@ -442,12 +503,10 @@ class Tune:
 
             if current_time <= self.config.chirp_duration:
                 # Calculate chirp signal
-                # Phase integral for linearly increasing frequency:
-                # phi(t) = 2π * (f0*t + k*t^2/2), where k is sweep rate
                 f0 = self.config.chirp_init_freq
                 k = self.config.chirp_sweep_rate
                 phase = 2.0 * math.pi * (f0 * current_time + 
-                                       0.5 * k * current_time * current_time)
+                                    0.5 * k * current_time * current_time)
                 
                 # Instantaneous frequency and angular velocity
                 freq = f0 + k * current_time
@@ -458,9 +517,9 @@ class Tune:
                             self.config.start_pos)
                 target_vel = self.config.chirp_amp * omega * math.cos(phase)
 
-                # Command both systems
-                for kos, data_dict in [(self.sim_kos, self.sim_data),
-                                     (self.real_kos, self.real_data)]:
+                # Command active systems
+                for kos, is_real in kos_configs:
+                    data_dict = self.real_data if is_real else self.sim_data
                     # Send command with both position and velocity
                     await kos.actuator.command_actuators([{
                         'actuator_id': self.config.actuator_id,
@@ -481,54 +540,38 @@ class Tune:
 
             await asyncio.sleep(1.0 / self.config.sample_rate)
         
-        # Compute frequency response
-        sim_freq_response, real_freq_response = metrics.analyze_frequency_response(
-            self.sim_data, 
-            self.real_data
-        )
+        # Compute frequency response only for active systems
+        if self.mode in ['compare', 'sim']:
+            sim_freq_response = metrics.analyze_frequency_response(self.sim_data)['sim']
+            self.sim_data["freq_response"] = sim_freq_response
+            print("\nSim Frequency Response Data:")
+            if sim_freq_response:
+                print(f"Frequencies: {len(sim_freq_response.get('freq', []))}")
+                sim_mag = sim_freq_response.get('magnitude', [])
+                if sim_mag:
+                    print(f"Magnitude range: {min(sim_mag)} to {max(sim_mag)}")
+                    sim_bandwidth = metrics.compute_bandwidth(
+                        sim_freq_response["freq"], 
+                        sim_freq_response["magnitude"]
+                    )
+                    if sim_bandwidth:
+                        print(f"Bandwidth (-3dB): {sim_bandwidth:.1f} Hz")
 
-         # Store frequency response data
-        self.sim_data["freq_response"] = sim_freq_response
-        self.real_data["freq_response"] = real_freq_response
-
-        print("\nFrequency Response Data:")
-        if 'freq_response' in self.sim_data and self.sim_data['freq_response']:
-            print(f"Sim frequencies: {len(self.sim_data['freq_response'].get('freq', []))}")
-            sim_mag = self.sim_data['freq_response'].get('magnitude', [])
-            if sim_mag:
-                print(f"Sim magnitude range: {min(sim_mag)} to {max(sim_mag)}")
-            else:
-                print("No sim magnitude data")
-        else:
-            print("No sim frequency response data")
-
-        if 'freq_response' in self.real_data and self.real_data['freq_response']:
-            print(f"Real frequencies: {len(self.real_data['freq_response'].get('freq', []))}")
-            real_mag = self.real_data['freq_response'].get('magnitude', [])
-            if real_mag:
-                print(f"Real magnitude range: {min(real_mag)} to {max(real_mag)}")
-            else:
-                print("No real magnitude data")
-        else:
-            print("No real frequency response data")
-            
-
-        # Compute bandwidths
-        sim_bandwidth = metrics.compute_bandwidth(
-            sim_freq_response["freq"], 
-            sim_freq_response["magnitude"]
-        )
-        real_bandwidth = metrics.compute_bandwidth(
-            real_freq_response["freq"], 
-            real_freq_response["magnitude"]
-        )
-
-        print("\nTest Results:")
-        if sim_bandwidth:
-            print(f"Sim Bandwidth (-3dB): {sim_bandwidth:.1f} Hz")
-        if real_bandwidth:
-            print(f"Real Bandwidth (-3dB): {real_bandwidth:.1f} Hz")
-
+        if self.mode in ['compare', 'real']:
+            real_freq_response = metrics.analyze_frequency_response(self.real_data)['real']
+            self.real_data["freq_response"] = real_freq_response
+            print("\nReal Frequency Response Data:")
+            if real_freq_response:
+                print(f"Frequencies: {len(real_freq_response.get('freq', []))}")
+                real_mag = real_freq_response.get('magnitude', [])
+                if real_mag:
+                    print(f"Magnitude range: {min(real_mag)} to {max(real_mag)}")
+                    real_bandwidth = metrics.compute_bandwidth(
+                        real_freq_response["freq"], 
+                        real_freq_response["magnitude"]
+                    )
+                    if real_bandwidth:
+                        print(f"Bandwidth (-3dB): {real_bandwidth:.1f} Hz")
 
     def save_and_plot_results(self):
         """Save data to files and generate plots"""
@@ -541,11 +584,15 @@ class Tune:
         os.makedirs(data_dir, exist_ok=True)
         os.makedirs(plot_dir, exist_ok=True)
 
+        # Only pass data that exists based on mode
+        sim_data = self.sim_data if self.mode in ['compare', 'sim'] else None
+        real_data = self.real_data if self.mode in ['compare', 'real'] else None
+
         # Save data
-        logger = DataLog(self.config, self.sim_data, self.real_data)
+        logger = DataLog(self.config, sim_data, real_data)
         logger.save_data(timestamp, data_dir)
 
         # Create plots
-        plotter = Plot(self.config, self.sim_data, self.real_data)
+        plotter = Plot(self.config, sim_data, real_data)
         plotter.create_plots(timestamp, plot_dir)
 

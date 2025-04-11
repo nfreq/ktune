@@ -18,15 +18,16 @@ class DataLog:
         44: "Right Knee Pitch", 45: "Right Ankle Pitch"
     }
 
-    def __init__(self, config, sim_data, real_data):
+    def __init__(self, config, sim_data=None, real_data=None):
         """Initialize the DataLogger.
         
         Args:
             config: Test configuration object
-            sim_data (dict): Simulation data
-            real_data (dict): Real robot data
+            sim_data (dict, optional): Simulation data
+            real_data (dict, optional): Real robot data
         """
         self.config = config
+        self.mode = config.mode
         self.sim_data = sim_data
         self.real_data = real_data
 
@@ -38,8 +39,8 @@ class DataLog:
             data_dir (str): Directory to save files
         """
         header = self._build_header(timestamp)
-        sim_output, real_output = self._prepare_output_data(header)
-        self._save_to_files(timestamp, data_dir, sim_output, real_output)
+        outputs = self._prepare_output_data(header)
+        self._save_to_files(timestamp, data_dir, outputs)
 
     def _build_header(self, timestamp: str):
         """Build metadata header with all metrics."""
@@ -49,6 +50,7 @@ class DataLog:
         # Build base header
         header = {
             "test_type": self.config.test,
+            "mode": self.mode,
             "actuator_id": self.config.actuator_id,
             "joint_name": joint_name,
             "timestamp": timestamp,
@@ -65,31 +67,36 @@ class DataLog:
         }
 
         # Add tracking metrics and statistics
+        tracking_metrics = {}
+        data_statistics = {}
+
+        if self.sim_data is not None:
+            tracking_metrics["sim"] = metrics.compute_tracking_metrics(
+                self.sim_data["cmd_time"], self.sim_data["cmd_pos"],
+                self.sim_data["time"], self.sim_data["position"],
+                self.sim_data["cmd_vel"], self.sim_data["velocity"]
+            )
+            data_statistics["sim"] = metrics.compute_data_statistics(
+                self.sim_data["time"],
+                self.sim_data["position"],
+                self.sim_data["velocity"]
+            )
+
+        if self.real_data is not None:
+            tracking_metrics["real"] = metrics.compute_tracking_metrics(
+                self.real_data["cmd_time"], self.real_data["cmd_pos"],
+                self.real_data["time"], self.real_data["position"],
+                self.real_data["cmd_vel"], self.real_data["velocity"]
+            )
+            data_statistics["real"] = metrics.compute_data_statistics(
+                self.real_data["time"],
+                self.real_data["position"],
+                self.real_data["velocity"]
+            )
+
         header.update({
-            "tracking_metrics": {
-                "sim": metrics.compute_tracking_metrics(
-                    self.sim_data["cmd_time"], self.sim_data["cmd_pos"],
-                    self.sim_data["time"], self.sim_data["position"],
-                    self.sim_data["cmd_vel"], self.sim_data["velocity"]
-                ),
-                "real": metrics.compute_tracking_metrics(
-                    self.real_data["cmd_time"], self.real_data["cmd_pos"],
-                    self.real_data["time"], self.real_data["position"],
-                    self.real_data["cmd_vel"], self.real_data["velocity"]
-                )
-            },
-            "data_statistics": {
-                "sim": metrics.compute_data_statistics(
-                    self.sim_data["time"],
-                    self.sim_data["position"],
-                    self.sim_data["velocity"]
-                ),
-                "real": metrics.compute_data_statistics(
-                    self.real_data["time"],
-                    self.real_data["position"],
-                    self.real_data["velocity"]
-                )
-            }
+            "tracking_metrics": tracking_metrics,
+            "data_statistics": data_statistics
         })
 
         # Add test-specific metadata
@@ -122,34 +129,27 @@ class DataLog:
     def _add_step_test_metadata(self, header):
         """Add step test specific metadata."""       
         vel = 0.0  # Default velocity limit
-        sim_metrics = metrics.compute_step_metrics(
-            np.array(self.sim_data["time"]), 
-            np.array(self.sim_data["position"]),
-            self.config.step_size,
-            self.config.step_hold_time,
-            self.config.step_count
-        )
-        real_metrics = metrics.compute_step_metrics(
-            np.array(self.real_data["time"]), 
-            np.array(self.real_data["position"]),
-            self.config.step_size,
-            self.config.step_hold_time,
-            self.config.step_count
-        )
+        step_metrics = {}
 
-        # Calculate average and max metrics
-        sim_stats = {
-            'max_overshoot': max(m['overshoot'] for m in sim_metrics) if sim_metrics else 0.0,
-            'avg_overshoot': np.mean([m['overshoot'] for m in sim_metrics]) if sim_metrics else 0.0,
-            'avg_rise_time': np.mean([m['rise_time'] for m in sim_metrics if m['rise_time'] is not None]),
-            'avg_settling_time': np.mean([m['settling_time'] for m in sim_metrics if m['settling_time'] is not None])
-        }
-        real_stats = {
-            'max_overshoot': max(m['overshoot'] for m in real_metrics) if real_metrics else 0.0,
-            'avg_overshoot': np.mean([m['overshoot'] for m in real_metrics]) if real_metrics else 0.0,
-            'avg_rise_time': np.mean([m['rise_time'] for m in real_metrics if m['rise_time'] is not None]),
-            'avg_settling_time': np.mean([m['settling_time'] for m in real_metrics if m['settling_time'] is not None])
-        }
+        if self.sim_data is not None:
+            sim_metrics = metrics.compute_step_metrics(
+                np.array(self.sim_data["time"]), 
+                np.array(self.sim_data["position"]),
+                self.config.step_size,
+                self.config.step_hold_time,
+                self.config.step_count
+            )
+            step_metrics["sim"] = self._compute_step_statistics(sim_metrics)
+
+        if self.real_data is not None:
+            real_metrics = metrics.compute_step_metrics(
+                np.array(self.real_data["time"]), 
+                np.array(self.real_data["position"]),
+                self.config.step_size,
+                self.config.step_hold_time,
+                self.config.step_count
+            )
+            step_metrics["real"] = self._compute_step_statistics(real_metrics)
 
         header.update({
             "step_size": self.config.step_size,
@@ -160,63 +160,71 @@ class DataLog:
             "total_duration": (self.config.step_hold_time * 
                              (2 * self.config.step_count + 1) + 
                              self.config.log_duration_pad),
-            "sim_metrics": {
-                "max_overshoot": sim_stats['max_overshoot'],
-                "avg_overshoot": sim_stats['avg_overshoot'],
-                "avg_rise_time": sim_stats['avg_rise_time'],
-                "avg_settling_time": sim_stats['avg_settling_time'],
-                "all_steps": sim_metrics  # Store metrics for each step
-            },
-            "real_metrics": {
-                "max_overshoot": real_stats['max_overshoot'],
-                "avg_overshoot": real_stats['avg_overshoot'],
-                "avg_rise_time": real_stats['avg_rise_time'],
-                "avg_settling_time": real_stats['avg_settling_time'],
-                "all_steps": real_metrics  # Store metrics for each step
-            }
+            "step_metrics": step_metrics
         })
 
+    def _compute_step_statistics(self, metrics_list):
+        """Compute statistics from step metrics."""
+        if not metrics_list:
+            return None
+        
+        return {
+            'max_overshoot': max(m['overshoot'] for m in metrics_list),
+            'avg_overshoot': np.mean([m['overshoot'] for m in metrics_list]),
+            'avg_rise_time': np.mean([m['rise_time'] for m in metrics_list if m['rise_time'] is not None]),
+            'avg_settling_time': np.mean([m['settling_time'] for m in metrics_list if m['settling_time'] is not None]),
+            'all_steps': metrics_list
+        }
+
     def _prepare_output_data(self, header):
-        """Prepare sim and real output data structures."""
-        sim_output = {
-            "header": header,
-            "data": {
-                "time": self.sim_data["time"],
-                "position": self.sim_data["position"],
-                "velocity": self.sim_data["velocity"],
-                "cmd_time": self.sim_data["cmd_time"],
-                "cmd_pos": self.sim_data["cmd_pos"],
-                "cmd_vel": self.sim_data["cmd_vel"]
+        """Prepare output data structures based on mode."""
+        outputs = {}
+
+        if self.sim_data is not None:
+            outputs["sim"] = {
+                "header": header,
+                "data": {
+                    "time": self.sim_data["time"],
+                    "position": self.sim_data["position"],
+                    "velocity": self.sim_data["velocity"],
+                    "cmd_time": self.sim_data["cmd_time"],
+                    "cmd_pos": self.sim_data["cmd_pos"],
+                    "cmd_vel": self.sim_data["cmd_vel"]
+                }
             }
-        }
+            # Add frequency response data for chirp tests
+            if self.config.test == "chirp" and "freq_response" in self.sim_data:
+                outputs["sim"]["data"]["freq_response"] = self.sim_data["freq_response"]
 
-        real_output = {
-            "header": header,
-            "data": {
-                "time": self.real_data["time"],
-                "position": self.real_data["position"],
-                "velocity": self.real_data["velocity"],
-                "cmd_time": self.real_data["cmd_time"],
-                "cmd_pos": self.real_data["cmd_pos"],
-                "cmd_vel": self.real_data["cmd_vel"]
+        if self.real_data is not None:
+            outputs["real"] = {
+                "header": header,
+                "data": {
+                    "time": self.real_data["time"],
+                    "position": self.real_data["position"],
+                    "velocity": self.real_data["velocity"],
+                    "cmd_time": self.real_data["cmd_time"],
+                    "cmd_pos": self.real_data["cmd_pos"],
+                    "cmd_vel": self.real_data["cmd_vel"]
+                }
             }
-        }
+            # Add frequency response data for chirp tests
+            if self.config.test == "chirp" and "freq_response" in self.real_data:
+                outputs["real"]["data"]["freq_response"] = self.real_data["freq_response"]
 
-        # Add frequency response data for chirp tests
-        if self.config.test == "chirp" and "freq_response" in self.sim_data:
-            sim_output["data"]["freq_response"] = self.sim_data["freq_response"]
-            real_output["data"]["freq_response"] = self.real_data["freq_response"]
+        return outputs
 
-        return sim_output, real_output
-
-    def _save_to_files(self, timestamp: str, data_dir: str, sim_output, real_output):
+    def _save_to_files(self, timestamp: str, data_dir: str, outputs):
         """Save data to JSON files."""
         base_path = os.path.join(data_dir, f"{timestamp}_{self.config.test}")
-        with open(f"{base_path}_sim.json", "w") as f:
-            json.dump(sim_output, f, indent=2)
-        with open(f"{base_path}_real.json", "w") as f:
-            json.dump(real_output, f, indent=2)
+        saved_files = []
+
+        for system, data in outputs.items():
+            filename = f"{base_path}_{system}.json"
+            with open(filename, "w") as f:
+                json.dump(data, f, indent=2)
+            saved_files.append(filename)
 
         print(f"\nSaved data files:")
-        print(f"  {base_path}_sim.json")
-        print(f"  {base_path}_real.json")
+        for filename in saved_files:
+            print(f"  {filename}")

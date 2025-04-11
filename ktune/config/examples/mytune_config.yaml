@@ -1,4 +1,6 @@
 name: "MyTest"
+mode: "compare" 
+
 connection:
   sim_ip: "127.0.0.1"
   real_ip: "192.168.42.1"
@@ -11,8 +13,8 @@ actuator:
     kd: 55.0
     ki: 0.01
   sim_gains:
-    kp: 24.0
-    kv: 0.75
+    kp: 22.0
+    kd: 5
 
 tests:
   type: "sine"

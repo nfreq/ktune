@@ -5,6 +5,23 @@ from pathlib import Path
 import json
 from typing import Dict
 
+# Calculate tracking metrics
+def compute_tracking_error(cmd_time, cmd_pos, actual_time, actual_pos):
+    """Compute RMS tracking error"""
+    # Interpolate commanded positions to actual timestamps
+    from scipy.interpolate import interp1d
+    cmd_interp = interp1d(cmd_time, cmd_pos, bounds_error=False)
+    cmd_at_actual = cmd_interp(actual_time)
+    
+    # Compute RMS error where we have both commanded and actual
+    valid_idx = ~np.isnan(cmd_at_actual)
+    if not np.any(valid_idx):
+        return float('nan')
+    
+    errors = cmd_at_actual[valid_idx] - np.array(actual_pos)[valid_idx]
+    rms_error = np.sqrt(np.mean(np.square(errors)))
+    return rms_error
+
 def compute_tracking_metrics(cmd_time, cmd_pos, actual_time, actual_pos, cmd_vel=None, actual_vel=None):
     """Compute tracking metrics between commanded and actual values.
     
@@ -172,25 +189,28 @@ def compute_frequency_response(cmd_time, cmd_pos, actual_time, actual_pos):
             "coherence": []
         }
 
-def analyze_frequency_response(sim_data, real_data):
+def analyze_frequency_response(sim_data=None, real_data=None):
     """Analyze frequency response for both simulation and real system."""
-    print("\nAnalyzing Simulation Data:")
-    sim_freq_response = compute_frequency_response(
-        sim_data["cmd_time"],
-        sim_data["cmd_pos"],
-        sim_data["time"],
-        sim_data["position"]
-    )
+    results = {}
     
-    print("\nAnalyzing Real System Data:")
-    real_freq_response = compute_frequency_response(
-        real_data["cmd_time"],
-        real_data["cmd_pos"],
-        real_data["time"],
-        real_data["position"]
-    )
+    if sim_data is not None:
+        print("\nAnalyzing Simulation Data:")
+        results["sim"] = compute_frequency_response(
+            sim_data["cmd_time"],
+            sim_data["cmd_pos"],
+            sim_data["time"],
+            sim_data["position"]
+        )
     
-    return sim_freq_response, real_freq_response
+    if real_data is not None:
+        print("\nAnalyzing Real System Data:")
+        results["real"] = compute_frequency_response(
+            real_data["cmd_time"],
+            real_data["cmd_pos"],
+            real_data["time"],
+            real_data["position"]
+        )
+    return results
 
 def compute_bandwidth(freq, magnitude):
     """Compute the -3dB bandwidth from frequency response data."""
