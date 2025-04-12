@@ -1,6 +1,7 @@
-# ktune - Actuator Tuning and System Identification Toolkit
+# ktune - Actuator Tuning and Sim2Real Validation Toolkit
 
-**ktune** is a powerful command-line tool designed to streamline actuator parameter tuning, data collection, and system identification for robotic systems. It facilitates running structured tests (sine, step, chirp) simultaneously in simulation and real hardware environments, enabling detailed performance analysis and simulation-to-reality comparisons.
+**ktune** is a command-line toolkit for actuator parameter tuning and simulation-to-reality (Sim2Real) validation. It enables running standardized motion tests (sine, step, chirp) simultaneously in simulation and hardware, providing quantitative comparison for actuator dynamics and control performance.
+
 
 ## Features
 
