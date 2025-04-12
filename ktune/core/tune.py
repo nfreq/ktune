@@ -32,8 +32,8 @@ class TuneConfig:
     
     # Actuator gains
     kp: float = 20.0
-    kd: float = 55.0
-    ki: float = 0.01
+    kd: float = 5.0
+    ki: float = 0.0
     
     # Actuator config
     acceleration: float = 0.0
@@ -41,8 +41,8 @@ class TuneConfig:
     torque_off: bool = False
 
     # Simulation gains
-    sim_kp: float = 24.0
-    sim_kd: float = 0.75
+    sim_kp: float = 20.0
+    sim_kd: float = 5.0
     stream_delay: float = 0.0
 
     # Logging config
@@ -257,6 +257,53 @@ class Tune:
                     actuator_id=servo_id,
                     torque_enabled=True
                 )
+
+    async def _move_to_start_position(self, kos_configs):
+        """Move to start position and wait until position is reached.
+        
+        Args:
+            kos_configs: List of (KOS, is_real) tuples for active systems
+        """
+        print(f"\nMoving to start position: {self.config.start_pos}°")
+        
+        # Command move to start position
+        for kos, _ in kos_configs:
+            print(f"Moving to start position: {self.config.start_pos}°")
+            await kos.actuator.command_actuators([{
+                'actuator_id': self.config.actuator_id,
+                'position': self.config.start_pos,
+            }])
+            await asyncio.sleep(1.0)
+
+        # Wait for position to be reached
+        settling_time = 1
+        max_settling_time = 10.0  # Maximum time to wait for settling
+        position_threshold = 0.2  # degrees
+        
+        while settling_time < max_settling_time:
+            all_settled = True
+            
+            for kos, is_real in kos_configs:
+                response = await kos.actuator.get_actuators_state([self.config.actuator_id])
+                if response.states:
+                    current_pos = response.states[0].position
+                    error = abs(current_pos - self.config.start_pos)
+                    system_type = "Real" if is_real else "Sim"
+                    if error > position_threshold:
+                        all_settled = False
+                        print(f"{system_type} Position Error: {error:.3f}°", end='\r')
+            
+            if all_settled:
+                print("\nStart position reached!")
+                break
+                
+            settling_time += 0.1
+            await asyncio.sleep(0.1)
+        
+        if settling_time >= max_settling_time:
+            print("\nWarning: Start position not reached within timeout")
+
+        await asyncio.sleep(1.0)
                 
     def _log_actuator_state(self, response, data_dict, current_time):
         """Log actuator state data with normalized time.
@@ -307,7 +354,7 @@ class Tune:
                 kp, kd, ki = (self.config.kp, self.config.kd, self.config.ki)
             else:
                 kp, kd, ki = (self.config.sim_kp, self.config.sim_kd, 0.0)
-
+            print(f"kp: {kp}, kd: {kd}, ki: {ki} is_real: {is_real}")
             await kos.actuator.configure_actuator(
                 actuator_id=self.config.actuator_id,
                 kp=kp, kd=kd, ki=ki,
@@ -316,14 +363,8 @@ class Tune:
                 torque_enabled=not self.config.torque_off
             )
 
-        # Move to start position and wait
-        for kos, _ in kos_configs:
-            await kos.actuator.command_actuators([{
-                'actuator_id': self.config.actuator_id,
-                'position': self.config.start_pos,
-                'velocity': 0.0
-            }])
-        await asyncio.sleep(2)
+        # Move to start position and wait for settling
+        await self._move_to_start_position(kos_configs)
 
         # Start test
         start_time = time.time()
@@ -348,7 +389,6 @@ class Tune:
                     await kos.actuator.command_actuators([{
                         'actuator_id': self.config.actuator_id,
                         'position': target_pos,
-                        'velocity': 0.0
                     }])
                     
                     # Log command
@@ -395,13 +435,8 @@ class Tune:
                 torque_enabled=not self.config.torque_off
             )
 
-        # Move to start position and wait
-        for kos, _ in kos_configs:
-            await kos.actuator.command_actuators([{
-                'actuator_id': self.config.actuator_id,
-                'position': self.config.start_pos
-            }])
-        await asyncio.sleep(2)
+        # Move to start position and wait for settling
+        await self._move_to_start_position(kos_configs)
 
         # Start test
         start_time = time.time()
@@ -426,7 +461,6 @@ class Tune:
                     await kos.actuator.command_actuators([{
                         'actuator_id': self.config.actuator_id,
                         'position': target_pos,
-                        'velocity': target_vel
                     }])
                     
                     # Log command
@@ -481,23 +515,22 @@ class Tune:
                 kp, kd, ki = (self.config.kp, self.config.kd, self.config.ki)
             else:
                 kp, kd, ki = (self.config.sim_kp, self.config.sim_kd, 0.0)
-
+            print(f"acceleration: {self.config}******************")
+            config = {
+                'torque_enabled': not self.config.torque_off,
+                'kp': kp,
+                'kd': kd,
+                'ki': ki,
+                'max_torque': self.config.max_torque,
+                'acceleration': self.config.acceleration  # Make sure this is included
+            }
             await kos.actuator.configure_actuator(
                 actuator_id=self.config.actuator_id,
-                kp=kp, kd=kd, ki=ki,
-                acceleration=self.config.acceleration,
-                max_torque=self.config.max_torque,
-                torque_enabled=not self.config.torque_off
+                **config
             )
-            print("self.config.torque_off: ", self.config.torque_off)
 
-        # Move to start position and wait
-        for kos, _ in kos_configs:
-            await kos.actuator.command_actuators([{
-                'actuator_id': self.config.actuator_id,
-                'position': self.config.start_pos
-            }])
-        await asyncio.sleep(2)
+        # Move to start position and wait for settling
+        await self._move_to_start_position(kos_configs)
 
         # Start test
         start_time = time.time()
@@ -529,7 +562,6 @@ class Tune:
                     await kos.actuator.command_actuators([{
                         'actuator_id': self.config.actuator_id,
                         'position': target_pos,
-                        'velocity': target_vel
                     }])
                     
                     # Log command

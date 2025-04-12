@@ -213,22 +213,24 @@ class Plot:
         joint_name = JOINT_NAMES.get(self.config.actuator_id, f"id_{self.config.actuator_id}")
 
         base_info = f"{self.config.name} -- {self.config.test.capitalize()} Test -- ID: {self.config.actuator_id}\n" #{joint_name}\n"
-        
+        accel_string = f"Acceleration: {self.config.acceleration:.0f} deg/s²\n"
+
         if self.config.test == "chirp":
             return (
                 f"{base_info}"
                 f"Center: {self.config.start_pos}°, Init Freq: {self.config.chirp_init_freq} Hz, "
                 f"Sweep Rate: {self.config.chirp_sweep_rate} Hz/s, Amp: {self.config.chirp_amp}°, "
                 f"Duration: {self.config.chirp_duration}s\n"
-                f"Update Rate: {self.config.sample_rate} Hz\n"
-                f"{self._get_gains_string()}"
+                f"{self._get_gains_string()}\n"
+                f"{accel_string}"
             )
         elif self.config.test == "sine":
             return (
                 f"{base_info}"
                 f"Center: {self.config.start_pos}°, Freq: {self.config.freq} Hz, "
                 f"Amp: {self.config.amp}°, Sample/Ctrl Rate: {self.config.sample_rate} Hz\n"
-                f"{self._get_gains_string()}"
+                f"{self._get_gains_string()}\n"
+                f"{accel_string}"
             )
         elif self.config.test == "step":
             metrics_string = self._get_step_metrics_string()
@@ -238,8 +240,8 @@ class Plot:
                 f"Hold: {self.config.step_hold_time}s, Count: {self.config.step_count}\n"
                 f"Update Rate: {self.config.sample_rate} Hz\n"
                 f"{self._get_gains_string()}\n"
-                f"{metrics_string}"
-                f"Acceleration: {self.config.acceleration:.0f} deg/s²"
+                #f"{metrics_string}"
+                f"{accel_string}"
             )
         else:
             return f"{self.config.test.capitalize()} Test - Actuator {self.config.actuator_id}"
