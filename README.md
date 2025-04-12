@@ -31,22 +31,130 @@ Ensure the `pykos` library is also installed and configured for your hardware.
 ktune --help
 ```
 
-### Running Tuning Tests
+### Running Tests
 
-**Step Test Example:**
+ktune supports three modes of operation:
+- `real`: Run tests on real hardware only
+- `sim`: Run tests in simulation only
+- `compare`: Run tests simultaneously on both real hardware and simulation
+
+Each mode supports three types of tests:
+- Sine wave tests
+- Step response tests
+- Chirp (frequency sweep) tests
+
+### Connection Parameters
+
+ktune works with both real hardware (via KOS) and simulation (via KOS-SIM):
+
+- **Real Hardware (KOS)**:
+  - Default IP: `192.168.42.1`
+  - Use `--real-ip` to specify a different address
+  - Typically used when connected to physical robot's network
+
+- **Simulation (KOS-SIM)**:
+  - Default IP: `127.0.0.1` (localhost)
+  - Use `--sim-ip` to specify a different address
+  - Requires running kos-sim instance
+
+#### Real Hardware Examples
+
 ```bash
-ktune tune step --actuator-id 11 --size 10.0 --hold-time 3.0 --count 2
+# Default connection (192.168.42.1)
+ktune real sine --actuator-id 11 --freq 1.0 --amp 5.0 --duration 5.0
+ktune real step --actuator-id 11 --step-size 10.0 --step-hold-time 3.0 --step-count 2
+ktune real chirp --actuator-id 11 --chirp-amp 5.0 --chirp-init-freq 1.0 --chirp-sweep-rate 0.5 --chirp-duration 5.0
+
+# Custom IP address
+ktune real sine --actuator-id 11 --freq 1.0 --amp 5.0 --duration 5.0 --real-ip 192.168.1.100
+ktune real step --actuator-id 11 --step-size 10.0 --step-hold-time 3.0 --step-count 2 --real-ip 192.168.1.100
+ktune real chirp --actuator-id 11 --chirp-amp 5.0 --chirp-init-freq 1.0 --chirp-sweep-rate 0.5 --real-ip 192.168.1.100
+
+# With control parameters
+ktune real sine --actuator-id 11 --freq 1.0 --amp 5.0 --duration 5.0 \
+    --kp 20.0 --kd 5.0 --ki 0.0 --max-torque 50.0
+
+ktune real step --actuator-id 11 --step-size 10.0 --step-hold-time 3.0 --step-count 2 \
+    --kp 20.0 --kd 5.0 --ki 0.0 --max-torque 50.0
+
+ktune real chirp --actuator-id 11 --chirp-amp 5.0 --chirp-init-freq 1.0 --chirp-sweep-rate 0.5 \
+    --kp 20.0 --kd 5.0 --ki 0.0 --max-torque 50.0
 ```
 
-**Sine Test Example:**
+#### Simulation Examples
+
 ```bash
-ktune tune sine --actuator-id 11 --freq 1.0 --amp 5.0 --duration 5.0
+# Default connection (localhost)
+ktune sim sine --actuator-id 11 --freq 1.0 --amp 5.0 --duration 5.0
+ktune sim step --actuator-id 11 --step-size 10.0 --step-hold-time 3.0 --step-count 2
+ktune sim chirp --actuator-id 11 --chirp-amp 5.0 --chirp-init-freq 1.0 --chirp-sweep-rate 0.5
+
+# Custom simulator IP
+ktune sim sine --actuator-id 11 --freq 1.0 --amp 5.0 --duration 5.0 --sim-ip 192.168.1.50
+ktune sim step --actuator-id 11 --step-size 10.0 --step-hold-time 3.0 --step-count 2 --sim-ip 192.168.1.50
+ktune sim chirp --actuator-id 11 --chirp-amp 5.0 --chirp-init-freq 1.0 --chirp-sweep-rate 0.5 --sim-ip 192.168.1.50
+
+# With simulation-specific parameters
+ktune sim sine --actuator-id 11 --freq 1.0 --amp 5.0 --duration 5.0 \
+    --sim-kp 20.0 --sim-kd 5.0 --stream-delay 0.0
+
+ktune sim step --actuator-id 11 --step-size 10.0 --step-hold-time 3.0 --step-count 2 \
+    --sim-kp 20.0 --sim-kd 5.0 --stream-delay 0.0
+
+ktune sim chirp --actuator-id 11 --chirp-amp 5.0 --chirp-init-freq 1.0 --chirp-sweep-rate 0.5 \
+    --sim-kp 20.0 --sim-kd 5.0 --stream-delay 0.0
 ```
 
-**Chirp Test Example:**
+#### Comparison Examples
+
 ```bash
-ktune tune chirp --actuator-id 11 --amp 5.0 --init-freq 1.0 --sweep-rate 0.5 --duration 5.0
+# Default connections
+ktune compare sine --actuator-id 11 --freq 1.0 --amp 5.0 --duration 5.0
+ktune compare step --actuator-id 11 --step-size 10.0 --step-hold-time 3.0 --step-count 2
+ktune compare chirp --actuator-id 11 --chirp-amp 5.0 --chirp-init-freq 1.0 --chirp-sweep-rate 0.5
+
+# Custom IPs for both real and simulation
+ktune compare sine --actuator-id 11 --freq 1.0 --amp 5.0 --duration 5.0 \
+    --real-ip 192.168.1.100 --sim-ip 192.168.1.50
+
+ktune compare step --actuator-id 11 --step-size 10.0 --step-hold-time 3.0 --step-count 2 \
+    --real-ip 192.168.1.100 --sim-ip 192.168.1.50
+
+ktune compare chirp --actuator-id 11 --chirp-amp 5.0 --chirp-init-freq 1.0 --chirp-sweep-rate 0.5 \
+    --real-ip 192.168.1.100 --sim-ip 192.168.1.50
+
+# Full configuration example
+ktune compare sine --actuator-id 11 --freq 1.0 --amp 5.0 --duration 5.0 \
+    --real-ip 192.168.1.100 --sim-ip 192.168.1.50 \
+    --kp 20.0 --kd 5.0 --ki 0.0 \
+    --sim-kp 20.0 --sim-kd 5.0 --stream-delay 0.0 \
+    --max-torque 50.0 --sample-rate 100.0
+
+ktune compare step --actuator-id 11 --step-size 10.0 --step-hold-time 3.0 --step-count 2 \
+    --real-ip 192.168.1.100 --sim-ip 192.168.1.50 \
+    --kp 20.0 --kd 5.0 --ki 0.0 \
+    --sim-kp 20.0 --sim-kd 5.0 --stream-delay 0.0 \
+    --max-torque 50.0 --sample-rate 100.0
+
+ktune compare chirp --actuator-id 11 --chirp-amp 5.0 --chirp-init-freq 1.0 --chirp-sweep-rate 0.5 \
+    --real-ip 192.168.1.100 --sim-ip 192.168.1.50 \
+    --kp 20.0 --kd 5.0 --ki 0.0 \
+    --sim-kp 20.0 --sim-kd 5.0 --stream-delay 0.0 \
+    --max-torque 50.0 --sample-rate 100.0
 ```
+
+### Common Options
+
+All test commands support these common options:
+- `--actuator-id`: ID of the actuator to test (default: 11)
+- `--start-pos`: Starting position in degrees (default: 0.0)
+- `--kp`: Proportional gain (default: 20.0)
+- `--kd`: Derivative gain (default: 5.0)
+- `--ki`: Integral gain (default: 0.0)
+- `--max-torque`: Maximum torque limit (default: 100.0)
+- `--acceleration`: Acceleration limit in deg/s² (default: 0.0)
+- `--sample-rate`: Data collection rate in Hz (default: 100.0)
+
 
 ### Servo Configuration
 
