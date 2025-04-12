@@ -35,26 +35,51 @@ class Plot:
             self._create_bode_plots(timestamp, plot_dir)
 
     def _create_time_history_plots(self, timestamp: str, plot_dir: str):
-        """Create time history plots."""
-        # Determine subplot configuration based on mode
-        if self.mode == 'compare':
-            fig, axs = plt.subplots(2, 2, figsize=(14, 8), sharex=True)
-        else:
-            fig, axs = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
-            # Convert to 2D array for consistent indexing
-            axs = axs.reshape(-1, 1)
-
+        """Create time history plots with overlaid real and sim data."""
+        # Create figure with two subplots (position and velocity)
+        fig, (ax_pos, ax_vel) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
         fig.suptitle(self._get_title_string(), fontsize=16)
 
         # Plot data based on mode
         if self.mode in ['compare', 'sim']:
-            self._plot_position_data(axs[0, 0], self.sim_data, "Sim", "blue", "o-")
-            self._plot_velocity_data_single(axs[1, 0], self.sim_data, "Sim", "blue", "o-")
+            # Plot simulation data in blue
+            ax_pos.plot(self.sim_data["cmd_time"], self.sim_data["cmd_pos"], 'k--',
+                    linewidth=1, label='Command')
+            ax_pos.plot(self.sim_data["time"], self.sim_data["position"], 'b-',
+                    linewidth=1, label='Sim')
+            
+            if self.config.test in ["sine", "chirp"]:
+                ax_vel.plot(self.sim_data["cmd_time"], self.sim_data["cmd_vel"], 'k--',
+                        linewidth=1, label='Command')
+            ax_vel.plot(self.sim_data["time"], self.sim_data["velocity"], 'b-',
+                    linewidth=1, label='Sim')
 
         if self.mode in ['compare', 'real']:
-            plot_col = 1 if self.mode == 'compare' else 0
-            self._plot_position_data(axs[0, plot_col], self.real_data, "Real", "red", "s-")
-            self._plot_velocity_data_single(axs[1, plot_col], self.real_data, "Real", "red", "s-")
+            # Plot real data in red
+            if self.mode != 'compare':  # Only plot command if not already plotted
+                ax_pos.plot(self.real_data["cmd_time"], self.real_data["cmd_pos"], 'k--',
+                        linewidth=1, label='Command')
+                if self.config.test in ["sine", "chirp"]:
+                    ax_vel.plot(self.real_data["cmd_time"], self.real_data["cmd_vel"], 'k--',
+                            linewidth=1, label='Command')
+            
+            ax_pos.plot(self.real_data["time"], self.real_data["position"], 'r-',
+                    linewidth=1, label='Real')
+            ax_vel.plot(self.real_data["time"], self.real_data["velocity"], 'r-',
+                    linewidth=1, label='Real')
+
+        # Format position plot
+        ax_pos.set_title("Position")
+        ax_pos.set_ylabel("Position (deg)")
+        ax_pos.grid(True)
+        ax_pos.legend()
+
+        # Format velocity plot
+        ax_vel.set_title("Velocity")
+        ax_vel.set_xlabel("Time (s)")
+        ax_vel.set_ylabel("Velocity (deg/s)")
+        ax_vel.grid(True)
+        ax_vel.legend()
 
         # Add version text and save
         plt.figtext(0.5, 0.02, f"ktune v{__version__}", ha='center', va='center', fontsize=12)
@@ -99,55 +124,76 @@ class Plot:
 
     def _create_bode_plots(self, timestamp: str, plot_dir: str):
         """Create Bode plots for chirp test results."""
-        fig_bode, (ax_mag, ax_phase) = plt.subplots(2, 1, figsize=(10, 10))
-        fig_bode.suptitle(f"{self.config.name} - Frequency Response", fontsize=16)
+        try:
+            fig_bode, (ax_mag, ax_phase) = plt.subplots(2, 1, figsize=(10, 10))
+            fig_bode.suptitle(f"{self.config.name} - Frequency Response", fontsize=16)
 
-        # Define available datasets
-        datasets = {
-            'Sim': (self.sim_data, 'b') if self.mode in ['compare', 'sim'] else None,
-            'Real': (self.real_data, 'r') if self.mode in ['compare', 'real'] else None
-        }
-        
-        # Filter out None values and plot available data
-        for label, (data, color) in {k: v for k, v in datasets.items() if v is not None}.items():
-            if "freq_response" not in data:
-                continue
+            # Define available datasets
+            datasets = {
+                'Sim': (self.sim_data, 'b') if self.mode in ['compare', 'sim'] else None,
+                'Real': (self.real_data, 'r') if self.mode in ['compare', 'real'] else None
+            }
+            
+            valid_data = False  # Track if we have any valid data to plot
+            
+            # Filter out None values and plot available data
+            for label, (data, color) in {k: v for k, v in datasets.items() if v is not None}.items():
+                if not data or "freq_response" not in data:
+                    print(f"Warning: No frequency response data for {label}")
+                    continue
 
-            freq_response = data["freq_response"]
-            freq = freq_response["freq"]
-            mag = freq_response["magnitude"]
-            phase = freq_response["phase"]
-            coherence = freq_response.get("coherence")
+                freq_response = data["freq_response"]
+                # Validate required frequency response data
+                if not all(key in freq_response for key in ["freq", "magnitude", "phase"]):
+                    print(f"Warning: Incomplete frequency response data for {label}")
+                    continue
 
-            # Plot magnitude
-            ax_mag.semilogx(freq, 20 * np.log10(mag), '-', color=color, label=label)
-            if coherence is not None:
-                ax_mag.fill_between(freq, 20 * np.log10(mag), alpha=0.2, color=color)
+                valid_data = True
+                freq = freq_response["freq"]
+                mag = freq_response["magnitude"]
+                phase = freq_response["phase"]
+                coherence = freq_response.get("coherence")
 
-            # Plot phase
-            ax_phase.semilogx(freq, phase, '-', color=color, label=label)
+                # Plot magnitude
+                ax_mag.semilogx(freq, 20 * np.log10(mag), '-', color=color, label=label)
+                if coherence is not None:
+                    ax_mag.fill_between(freq, 20 * np.log10(mag), alpha=0.2, color=color)
 
-            # Add bandwidth annotation
-            bandwidth = metrics.compute_bandwidth(freq, mag)
-            if bandwidth:
-                ax_mag.axvline(x=bandwidth, color=color, linestyle='--', alpha=0.5)
-                ax_mag.text(bandwidth, -3, f'{label} BW: {bandwidth:.1f}Hz', 
-                          rotation=90, verticalalignment='bottom')
+                # Plot phase
+                ax_phase.semilogx(freq, phase, '-', color=color, label=label)
 
-        # Format plots
-        ax_mag.set_ylabel("Magnitude (dB)")
-        ax_mag.set_title("Bode Plot")
-        ax_mag.grid(True, which="both")
-        ax_mag.legend()
+                # Add bandwidth annotation if we can compute it
+                try:
+                    bandwidth = metrics.compute_bandwidth(freq, mag)
+                    if bandwidth:
+                        ax_mag.axvline(x=bandwidth, color=color, linestyle='--', alpha=0.5)
+                        ax_mag.text(bandwidth, -3, f'{label} BW: {bandwidth:.1f}Hz', 
+                                rotation=90, verticalalignment='bottom')
+                except Exception as e:
+                    print(f"Warning: Could not compute bandwidth for {label}: {e}")
 
-        ax_phase.set_xlabel("Frequency (Hz)")
-        ax_phase.set_ylabel("Phase (degrees)")
-        ax_phase.grid(True, which="both")
-        ax_phase.legend()
+            if valid_data:
+                # Format plots
+                ax_mag.set_ylabel("Magnitude (dB)")
+                ax_mag.set_title("Bode Plot")
+                ax_mag.grid(True, which="both")
+                ax_mag.legend()
 
-        plt.tight_layout()
-        plt.savefig(os.path.join(plot_dir, f"{timestamp}_{self.config.test}_bode.png"))
-        plt.close()
+                ax_phase.set_xlabel("Frequency (Hz)")
+                ax_phase.set_ylabel("Phase (degrees)")
+                ax_phase.grid(True, which="both")
+                ax_phase.legend()
+
+                plt.tight_layout()
+                plt.savefig(os.path.join(plot_dir, f"{timestamp}_{self.config.test}_bode.png"))
+            else:
+                print("Warning: No valid frequency response data available for Bode plots")
+                
+            plt.close()
+
+        except Exception as e:
+            print(f"Warning: Could not create Bode plots: {e}")
+            plt.close()  # Ensure figure is closed even if there's an error
 
 
 
@@ -203,7 +249,7 @@ class Plot:
         """Generate gains string based on mode."""
         gains = []
         if self.mode in ['compare', 'sim']:
-            gains.append(f"Sim Kp: {self.config.sim_kp} Kv: {self.config.sim_kv}")
+            gains.append(f"Sim Kp: {self.config.sim_kp} Kd: {self.config.sim_kd}")
         if self.mode in ['compare', 'real']:
             gains.append(f"Real Kp: {self.config.kp} Kd: {self.config.kd} Ki: {self.config.ki}")
         return " | ".join(gains)

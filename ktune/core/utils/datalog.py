@@ -32,15 +32,28 @@ class DataLog:
         self.real_data = real_data
 
     def save_data(self, timestamp: str, data_dir: str):
-        """Save test data and metadata to JSON files.
+        """Save test data to file.
         
         Args:
             timestamp (str): Timestamp for file naming
-            data_dir (str): Directory to save files
+            data_dir (str): Directory to save data file
         """
-        header = self._build_header(timestamp)
-        outputs = self._prepare_output_data(header)
-        self._save_to_files(timestamp, data_dir, outputs)
+        # Build data structure
+        data = self._build_header(timestamp)
+        
+        # Only include data for active modes
+        if self.config.mode in ['compare', 'sim'] and self.sim_data:
+            data["sim_data"] = self.sim_data
+        
+        if self.config.mode in ['compare', 'real'] and self.real_data:
+            data["real_data"] = self.real_data
+
+        # Save to file
+        filename = f"{timestamp}_{self.config.test}.json"
+        filepath = os.path.join(data_dir, filename)
+        
+        with open(filepath, 'w') as f:
+            json.dump(data, f, indent=2)
 
     def _build_header(self, timestamp: str):
         """Build metadata header with all metrics."""
@@ -58,7 +71,7 @@ class DataLog:
             "start_position": self.config.start_pos,
             "sample_rate": self.config.sample_rate,
             "gains": {
-                "sim": {"kp": self.config.sim_kp, "kv": self.config.sim_kv},
+                "sim": {"kp": self.config.sim_kp, "Kd": self.config.sim_kd},
                 "real": {"kp": self.config.kp, "kd": self.config.kd, "ki": self.config.ki}
             },
             "acceleration": self.config.acceleration,
@@ -70,7 +83,8 @@ class DataLog:
         tracking_metrics = {}
         data_statistics = {}
 
-        if self.sim_data is not None:
+        # Only compute metrics for active modes with data
+        if self.mode in ['compare', 'sim'] and self.sim_data:
             tracking_metrics["sim"] = metrics.compute_tracking_metrics(
                 self.sim_data["cmd_time"], self.sim_data["cmd_pos"],
                 self.sim_data["time"], self.sim_data["position"],
@@ -82,7 +96,7 @@ class DataLog:
                 self.sim_data["velocity"]
             )
 
-        if self.real_data is not None:
+        if self.mode in ['compare', 'real'] and self.real_data:
             tracking_metrics["real"] = metrics.compute_tracking_metrics(
                 self.real_data["cmd_time"], self.real_data["cmd_pos"],
                 self.real_data["time"], self.real_data["position"],
