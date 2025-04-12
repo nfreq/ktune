@@ -27,14 +27,16 @@ def create_mode_command(mode: str):
         if mode == 'compare':
             f = click.option('--sim-ip', default="127.0.0.1", help='Simulator KOS IP address')(f)
             f = click.option('--real-ip', default="192.168.42.1", help='Real robot KOS IP address')(f)
-            f = click.option('--sim-kp', type=float, default=24.0, help='Simulation proportional gain')(f)
-            f = click.option('--sim-kv', type=float, default=0.75, help='Simulation damping gain')(f)
+            f = click.option('--sim-kp', type=float, default=20.0, help='Simulation proportional gain')(f)
+            f = click.option('--sim-kd', type=float, default=5.0, help='Simulation damping gain')(f)
+            f = click.option('--stream-delay', type=float, default=0.0, help='Simulation stream delay (seconds)')(f)
         elif mode == 'real':
-            f = click.option('--ip', default="192.168.42.1", help='Real robot KOS IP address')(f)
+            f = click.option('--real-ip', default="192.168.42.1", help='Real robot KOS IP address')(f)
         elif mode == 'sim':
             f = click.option('--sim-ip', default="127.0.0.1", help='Simulator KOS IP address')(f)
-            f = click.option('--sim-kp', type=float, default=24.0, help='Simulation proportional gain')(f)
-            f = click.option('--sim-kv', type=float, default=0.75, help='Simulation damping gain')(f)
+            f = click.option('--sim-kp', type=float, default=20.0, help='Simulation proportional gain')(f)
+            f = click.option('--sim-kd', type=float, default=5.0, help='Simulation damping gain')(f)
+            f = click.option('--stream-delay', type=float, default=0.0, help='Simulation stream delay (seconds)')(f)
         return f
     return decorator
 
@@ -65,8 +67,8 @@ def add_common_options(command):
         click.option('--actuator-id', type=int, default=11, help='Actuator ID to test'),
         click.option('--start-pos', type=float, default=0.0, help='Start position (degrees)'),
         click.option('--kp', type=float, default=20.0, help='Proportional gain'),
-        click.option('--kd', type=float, default=55.0, help='Derivative gain'),
-        click.option('--ki', type=float, default=0.01, help='Integral gain'),
+        click.option('--kd', type=float, default=5.0, help='Derivative gain'),
+        click.option('--ki', type=float, default=0.0, help='Integral gain'),
         click.option('--acceleration', type=float, default=0.0, help='Acceleration (deg/s^2)'),
         click.option('--max-torque', type=float, default=100.0, help='Max torque'),
         click.option('--torque-off', is_flag=True, help='Disable torque for test?'),
@@ -116,20 +118,163 @@ def handle_test(ctx, kwargs, mode: str, test_type: str):
     _validate_and_run(ctx.obj['config'])
 
 # Define the mode groups
+# ... existing code ...
+
 @cli.group()
 def compare():
-    """Run comparison tests between real and simulated systems"""
+    """Run comparison tests between real and simulated systems.
+    
+    Available tests:
+    - sine: Run sinusoidal motion tests
+    - step: Run step response tests
+    - chirp: Run frequency sweep tests"""
     pass
 
 @cli.group()
 def real():
-    """Run tests on real hardware only"""
+    """Run tests on real hardware only.
+    
+    Available tests:
+    - sine: Run sinusoidal motion tests
+    - step: Run step response tests
+    - chirp: Run frequency sweep tests"""
     pass
 
 @cli.group()
 def sim():
-    """Run tests on simulator only"""
+    """Run tests on simulator only.
+    
+    Available tests:
+    - sine: Run sinusoidal motion tests
+    - step: Run step response tests
+    - chirp: Run frequency sweep tests"""
     pass
+
+# Add missing commands for each mode
+# Real mode commands
+@real.command(name='sine')
+@create_mode_command('real')
+@create_test_command('sine')
+@click.pass_context
+def real_sine(ctx, **kwargs):
+    """Run sine wave test on real hardware.
+    
+    Parameters:
+    --freq: Sine frequency in Hz
+    --amp: Sine amplitude in degrees
+    --duration: Test duration in seconds"""
+    handle_test(ctx, kwargs, 'real', 'sine')
+
+@real.command(name='step')
+@create_mode_command('real')
+@create_test_command('step')
+@click.pass_context
+def real_step(ctx, **kwargs):
+    """Run step response test on real hardware.
+    
+    Parameters:
+    --step-size: Size of step in degrees
+    --step-hold-time: Hold time at each step in seconds
+    --step-count: Number of steps to perform"""
+    handle_test(ctx, kwargs, 'real', 'step')
+
+@real.command(name='chirp')
+@create_mode_command('real')
+@create_test_command('chirp')
+@click.pass_context
+def real_chirp(ctx, **kwargs):
+    """Run chirp (frequency sweep) test on real hardware.
+    
+    Parameters:
+    --chirp-amp: Amplitude in degrees
+    --chirp-init-freq: Initial frequency in Hz
+    --chirp-sweep-rate: Rate of frequency increase in Hz/s
+    --chirp-duration: Test duration in seconds"""
+    handle_test(ctx, kwargs, 'real', 'chirp')
+
+# Sim mode commands
+@sim.command(name='sine')
+@create_mode_command('sim')
+@create_test_command('sine')
+@click.pass_context
+def sim_sine(ctx, **kwargs):
+    """Run sine wave test in simulator.
+    
+    Parameters:
+    --freq: Sine frequency in Hz
+    --amp: Sine amplitude in degrees
+    --duration: Test duration in seconds"""
+    handle_test(ctx, kwargs, 'sim', 'sine')
+
+@sim.command(name='step')
+@create_mode_command('sim')
+@create_test_command('step')
+@click.pass_context
+def sim_step(ctx, **kwargs):
+    """Run step response test in simulator.
+    
+    Parameters:
+    --step-size: Size of step in degrees
+    --step-hold-time: Hold time at each step in seconds
+    --step-count: Number of steps to perform"""
+    handle_test(ctx, kwargs, 'sim', 'step')
+
+@sim.command(name='chirp')
+@create_mode_command('sim')
+@create_test_command('chirp')
+@click.pass_context
+def sim_chirp(ctx, **kwargs):
+    """Run chirp (frequency sweep) test in simulator.
+    
+    Parameters:
+    --chirp-amp: Amplitude in degrees
+    --chirp-init-freq: Initial frequency in Hz
+    --chirp-sweep-rate: Rate of frequency increase in Hz/s
+    --chirp-duration: Test duration in seconds"""
+    handle_test(ctx, kwargs, 'sim', 'chirp')
+
+# Compare mode commands
+@compare.command(name='sine')
+@create_mode_command('compare')
+@create_test_command('sine')
+@click.pass_context
+def compare_sine(ctx, **kwargs):
+    """Run sine wave comparison test between real and simulated systems.
+    
+    Parameters:
+    --freq: Sine frequency in Hz
+    --amp: Sine amplitude in degrees
+    --duration: Test duration in seconds"""
+    handle_test(ctx, kwargs, 'compare', 'sine')
+
+@compare.command(name='step')
+@create_mode_command('compare')
+@create_test_command('step')
+@click.pass_context
+def compare_step(ctx, **kwargs):
+    """Run step response comparison test between real and simulated systems.
+    
+    Parameters:
+    --step-size: Size of step in degrees
+    --step-hold-time: Hold time at each step in seconds
+    --step-count: Number of steps to perform"""
+    handle_test(ctx, kwargs, 'compare', 'step')
+
+@compare.command(name='chirp')
+@create_mode_command('compare')
+@create_test_command('chirp')
+@click.pass_context
+def compare_chirp(ctx, **kwargs):
+    """Run chirp (frequency sweep) comparison test between real and simulated systems.
+    
+    Parameters:
+    --chirp-amp: Amplitude in degrees
+    --chirp-init-freq: Initial frequency in Hz
+    --chirp-sweep-rate: Rate of frequency increase in Hz/s
+    --chirp-duration: Test duration in seconds"""
+    handle_test(ctx, kwargs, 'compare', 'chirp')
+
+# ... existing code ...
 
 for mode_group in [compare, real, sim]:
     @mode_group.command(name='enable')
@@ -147,36 +292,6 @@ for mode_group in [compare, real, sim]:
         """Disable specified servo IDs"""
         config = {'tune': {'mode': ctx.parent.command.name, 'disable_servos': list(servo_ids)}}
         _validate_and_run(config)
-
-# Define test commands for each mode
-for mode_group, mode_name, mode_desc in [
-    (compare, 'compare', 'comparison test'),
-    (real, 'real', 'real hardware test'),
-    (sim, 'sim', 'simulator test')
-]:
-    @mode_group.command(name='sine')
-    @create_mode_command(mode_name)
-    @create_test_command('sine')
-    @click.pass_context
-    def sine(ctx, **kwargs):
-        f"""Run sine wave {mode_desc}"""
-        handle_test(ctx, kwargs, mode_name, 'sine')
-
-    @mode_group.command(name='step')
-    @create_mode_command(mode_name)
-    @create_test_command('step')
-    @click.pass_context
-    def step(ctx, **kwargs):
-        f"""Run step response {mode_desc}"""
-        handle_test(ctx, kwargs, mode_name, 'step')
-
-    @mode_group.command(name='chirp')
-    @create_mode_command(mode_name)
-    @create_test_command('chirp')
-    @click.pass_context
-    def chirp(ctx, **kwargs):
-        f"""Run chirp {mode_desc}"""
-        handle_test(ctx, kwargs, mode_name, 'chirp')
 
 
 
