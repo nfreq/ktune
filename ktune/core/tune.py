@@ -42,7 +42,8 @@ class TuneConfig:
 
     # Simulation gains
     sim_kp: float = 24.0
-    sim_kv: float = 0.75
+    sim_kd: float = 0.75
+    stream_delay: float = 0.0
 
     # Logging config
     no_log: bool = False
@@ -73,7 +74,7 @@ class Tune:
     def __init__(self, config: Dict):
         tune_config = config.get('tune', {})
         self.config = TuneConfig(**tune_config)
-        self.mode = tune_config.get('mode', 'compare')  # Get mode from config
+        self.mode = self.config.mode
         
         # Initialize data storage based on mode
         self.sim_data = None
@@ -141,7 +142,7 @@ class Tune:
         print(f"  Acceleration: {self.config.acceleration}")
         print("Simulation:")
         print(f"  Kp: {self.config.sim_kp}")
-        print(f"  Kv: {self.config.sim_kv}")
+        print(f"  Kd: {self.config.sim_kd}")
         
         # Print test-specific parameters
         if self.config.test == "step":
@@ -267,11 +268,14 @@ class Tune:
         """
         if response.states:
             state = response.states[0]
+            log_time = current_time
+            if data_dict is self.sim_data:
+                log_time = current_time + self.config.stream_delay
             if state.position is not None:
                 data_dict["position"].append(state.position)
             if state.velocity is not None:
                 data_dict["velocity"].append(state.velocity)
-            data_dict["time"].append(current_time)
+            data_dict["time"].append(log_time)
 
     
 
@@ -302,7 +306,7 @@ class Tune:
             if is_real:
                 kp, kd, ki = (self.config.kp, self.config.kd, self.config.ki)
             else:
-                kp, kd, ki = (self.config.sim_kp, self.config.sim_kv, 0.0)
+                kp, kd, ki = (self.config.sim_kp, self.config.sim_kd, 0.0)
 
             await kos.actuator.configure_actuator(
                 actuator_id=self.config.actuator_id,
@@ -381,7 +385,7 @@ class Tune:
             if is_real:
                 kp, kd, ki = (self.config.kp, self.config.kd, self.config.ki)
             else:
-                kp, kd, ki = (self.config.sim_kp, self.config.sim_kv, 0.0)
+                kp, kd, ki = (self.config.sim_kp, self.config.sim_kd, 0.0)
 
             await kos.actuator.configure_actuator(
                 actuator_id=self.config.actuator_id,
@@ -476,7 +480,7 @@ class Tune:
             if is_real:
                 kp, kd, ki = (self.config.kp, self.config.kd, self.config.ki)
             else:
-                kp, kd, ki = (self.config.sim_kp, self.config.sim_kv, 0.0)
+                kp, kd, ki = (self.config.sim_kp, self.config.sim_kd, 0.0)
 
             await kos.actuator.configure_actuator(
                 actuator_id=self.config.actuator_id,
@@ -485,6 +489,7 @@ class Tune:
                 max_torque=self.config.max_torque,
                 torque_enabled=not self.config.torque_off
             )
+            print("self.config.torque_off: ", self.config.torque_off)
 
         # Move to start position and wait
         for kos, _ in kos_configs:
@@ -542,36 +547,44 @@ class Tune:
         
         # Compute frequency response only for active systems
         if self.mode in ['compare', 'sim']:
-            sim_freq_response = metrics.analyze_frequency_response(self.sim_data)['sim']
-            self.sim_data["freq_response"] = sim_freq_response
-            print("\nSim Frequency Response Data:")
-            if sim_freq_response:
-                print(f"Frequencies: {len(sim_freq_response.get('freq', []))}")
-                sim_mag = sim_freq_response.get('magnitude', [])
-                if sim_mag:
-                    print(f"Magnitude range: {min(sim_mag)} to {max(sim_mag)}")
-                    sim_bandwidth = metrics.compute_bandwidth(
-                        sim_freq_response["freq"], 
-                        sim_freq_response["magnitude"]
-                    )
-                    if sim_bandwidth:
-                        print(f"Bandwidth (-3dB): {sim_bandwidth:.1f} Hz")
+            try:
+                freq_response = metrics.analyze_frequency_response(self.sim_data)
+                sim_freq_response = freq_response.get('sim', {})
+                self.sim_data["freq_response"] = sim_freq_response
+                print("\nSim Frequency Response Data:")
+                if sim_freq_response:
+                    print(f"Frequencies: {len(sim_freq_response.get('freq', []))}")
+                    sim_mag = sim_freq_response.get('magnitude', [])
+                    if sim_mag:
+                        print(f"Magnitude range: {min(sim_mag)} to {max(sim_mag)}")
+                        sim_bandwidth = metrics.compute_bandwidth(
+                            sim_freq_response["freq"], 
+                            sim_freq_response["magnitude"]
+                        )
+                        if sim_bandwidth:
+                            print(f"Bandwidth (-3dB): {sim_bandwidth:.1f} Hz")
+            except Exception as e:
+                print(f"Warning: Could not compute simulation frequency response: {e}")
 
         if self.mode in ['compare', 'real']:
-            real_freq_response = metrics.analyze_frequency_response(self.real_data)['real']
-            self.real_data["freq_response"] = real_freq_response
-            print("\nReal Frequency Response Data:")
-            if real_freq_response:
-                print(f"Frequencies: {len(real_freq_response.get('freq', []))}")
-                real_mag = real_freq_response.get('magnitude', [])
-                if real_mag:
-                    print(f"Magnitude range: {min(real_mag)} to {max(real_mag)}")
-                    real_bandwidth = metrics.compute_bandwidth(
-                        real_freq_response["freq"], 
-                        real_freq_response["magnitude"]
-                    )
-                    if real_bandwidth:
-                        print(f"Bandwidth (-3dB): {real_bandwidth:.1f} Hz")
+            try:
+                freq_response = metrics.analyze_frequency_response(self.real_data)
+                real_freq_response = freq_response.get('real', {})
+                self.real_data["freq_response"] = real_freq_response
+                print("\nReal Frequency Response Data:")
+                if real_freq_response:
+                    print(f"Frequencies: {len(real_freq_response.get('freq', []))}")
+                    real_mag = real_freq_response.get('magnitude', [])
+                    if real_mag:
+                        print(f"Magnitude range: {min(real_mag)} to {max(real_mag)}")
+                        real_bandwidth = metrics.compute_bandwidth(
+                            real_freq_response["freq"], 
+                            real_freq_response["magnitude"]
+                        )
+                        if real_bandwidth:
+                            print(f"Bandwidth (-3dB): {real_bandwidth:.1f} Hz")
+            except Exception as e:
+                print(f"Warning: Could not compute real system frequency response: {e}")
 
     def save_and_plot_results(self):
         """Save data to files and generate plots"""
@@ -585,8 +598,8 @@ class Tune:
         os.makedirs(plot_dir, exist_ok=True)
 
         # Only pass data that exists based on mode
-        sim_data = self.sim_data if self.mode in ['compare', 'sim'] else None
-        real_data = self.real_data if self.mode in ['compare', 'real'] else None
+        sim_data = self.sim_data if self.mode in ['compare', 'sim'] else {}  # Empty dict instead of None
+        real_data = self.real_data if self.mode in ['compare', 'real'] else {}  # Empty dict instead of None
 
         # Save data
         logger = DataLog(self.config, sim_data, real_data)
