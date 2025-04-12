@@ -1,6 +1,6 @@
 # ktune - Sim2Real Toolkit
 
-**ktune** is a command-line toolkit for actuator parameter tuning and simulation-to-reality (Sim2Real) validation. It enables running standardized motion tests (sine, step, chirp) simultaneously in simulation and hardware, providing quantitative comparison for actuator dynamics and control performance.
+**ktune** is a command-line utility for actuator tuning and simulation-to-reality (Sim2Real) validation. It enables running standardized motion tests (sine, step, chirp) simultaneously in simulation and hardware, providing quantitative comparison for actuator dynamics and control performance.
 
 
 ## Features
