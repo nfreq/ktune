@@ -45,7 +45,7 @@ def plot_actuator_subplots(actuator_files,
         sim_df, sim_meta = load_data_from_file(files['sim'])
 
         ax.plot(real_df["time_since_start"], real_df["commanded_position"],
-                "k:",  linewidth=1,  label="Commanded")
+                "k-",  linewidth=2,  label="Commanded")
         ax.plot(real_df["time_since_start"], real_df["position"],
                 "r-", linewidth=1.2, label="Real")
         ax.plot(sim_df["time_since_start"],  sim_df["position"],
