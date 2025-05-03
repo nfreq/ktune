@@ -68,7 +68,7 @@ instance/
 
 # Scrapy stuff:
 .scrapy
-*/data/*
+*/data/sim_data/*
 
 # Sphinx documentation
 docs/_build/
