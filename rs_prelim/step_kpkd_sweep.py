@@ -28,7 +28,7 @@ async def run_step_test(
     kp, kd, max_torque, min_pos, max_pos,
     step_size, step_hold_time, 
     start_pos, sim,
-    armature, frictionloss, actuatorfrcrange):
+    armature, frictionloss, actuatorfrcrange, damping):
 
     logger.info(f"Running test with kp={kp:.2f}, kd={kd:.2f}")
 
@@ -85,7 +85,7 @@ async def run_step_test(
 
     # Save collected data to JSON
     simorreal = "sim" if sim else "real"
-    fldr_name = datetime.now().strftime("%Y%m%d")
+    fldr_name = f"step_f{frictionloss}_d{damping}"
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     
     # Use actual kp and kd values in the filename
@@ -115,7 +115,8 @@ async def run_step_test(
             "mode": 'sim' if sim else 'real',
             "armature": armature,
             "frictionloss": frictionloss,
-            "actuatorfrcrange": actuatorfrcrange
+            "actuatorfrcrange": actuatorfrcrange,
+            "damping": damping
         },
         "data": json_data
     }
@@ -199,7 +200,8 @@ if __name__ == "__main__":
         passive_params = metadata["actuator_type_passive_param"][actuator_type]
         TEST_CONFIGS["armature"] = float(passive_params["armature"])
         TEST_CONFIGS["frictionloss"] = float(passive_params["frictionloss"])
-        
+        TEST_CONFIGS["damping"] = float(passive_params["damping"])
+
         # Parse actuatorfrcrange
         frc_range = passive_params["actuatorfrcrange"].split()
         TEST_CONFIGS["actuatorfrcrange"] = [float(frc_range[0]), float(frc_range[1])]
