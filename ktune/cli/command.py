@@ -10,8 +10,7 @@ from ktune.core.tune import Tune
 from ktune.core.sysid.testbed.pendulum import PendulumBench, PendulumConfig
 from ktune.core.utils import metrics
 from pykos import KOS
-import numpy as np
-
+import random
 @click.group()
 def cli():
     """KTune - Motor tuning and system identification toolkit"""
@@ -44,18 +43,39 @@ def create_test_command(test_type: str):
     """Create a command decorator with test-specific options"""
     def decorator(f):
         if test_type == 'sine':
-            f = click.option('--freq', type=float, default=1.0, help='Sine frequency (Hz)')(f)
-            f = click.option('--amp', type=float, default=5.0, help='Sine amplitude (degrees)')(f)
+            f = click.option('--freq', type=float, default=0.5, help='Sine frequency (Hz)')(f)
+            f = click.option('--amp', type=float, default=10.0, help='Sine amplitude (degrees)')(f)
             f = click.option('--duration', type=float, default=5.0, help='Duration (seconds)')(f)
         elif test_type == 'step':
             f = click.option('--step-size', type=float, default=10.0, help='Step size (degrees)')(f)
             f = click.option('--step-hold-time', type=float, default=3.0, help='Hold time (seconds)')(f)
             f = click.option('--step-count', type=int, default=2, help='Number of steps')(f)
+            # Add new random step options
+            f = click.option('--random', is_flag=True, help='Use random step sizes')(f)
+            f = click.option('--step-min', type=float, default=5.0, help='Minimum step size (degrees)')(f)
+            f = click.option('--step-max', type=float, default=15.0, help='Maximum step size (degrees)')(f)
+            f = click.option('--max-total', type=float, default=30.0, help='Maximum total deviation from start (degrees)')(f)
+            f = click.option('--seed', type=int, help='Random seed for reproducibility')(f)
         elif test_type == 'chirp':
             f = click.option('--chirp-amp', type=float, default=5.0, help='Chirp amplitude (degrees)')(f)
             f = click.option('--chirp-init-freq', type=float, default=1.0, help='Initial frequency (Hz)')(f)
             f = click.option('--chirp-sweep-rate', type=float, default=0.5, help='Sweep rate (Hz/s)')(f)
             f = click.option('--chirp-duration', type=float, default=5.0, help='Duration (seconds)')(f)
+        elif test_type == 'sin_sin':
+            f = click.option('--freq1', type=float, default=0.5, help='First sine frequency (Hz)')(f)
+            f = click.option('--amp1', type=float, default=10.0, help='First sine amplitude (degrees)')(f)
+            f = click.option('--freq2', type=float, default=0.25, help='Second sine frequency (Hz)')(f)
+            f = click.option('--amp2', type=float, default=5.0, help='Second sine amplitude (degrees)')(f)
+            f = click.option('--duration', type=float, default=5.0, help='Duration (seconds)')(f)
+            # Randomness
+            f = click.option('--random', is_flag=True, help='Use random frequencies and amplitudes')(f)
+            f = click.option('--random-reset', type=float, help='Time interval to reset random values (seconds)')(f)
+            f = click.option('--freq-min', type=float, default=0.1, help='Minimum frequency for random selection (Hz)')(f)
+            f = click.option('--freq-max', type=float, default=0.3, help='Maximum frequency for random selection (Hz)')(f)
+            f = click.option('--amp-min', type=float, default=2.0, help='Minimum amplitude for random selection (degrees)')(f)
+            f = click.option('--amp-max', type=float, default=10.0, help='Maximum amplitude for random selection (degrees)')(f)
+            f = click.option('--seed', type=int, help='Random seed for reproducibility')(f)
+
         return f
     return decorator
 
@@ -75,7 +95,7 @@ def add_common_options(command):
         click.option('--no-log', is_flag=True, help='Do not record/plot data'),
         click.option('--log-duration-pad', type=float, default=2.0,
                     help='Pad (seconds) after motion ends to keep logging'),
-        click.option('--sample-rate', type=float, default=100.0, help='Data collection rate (Hz)'),
+        click.option('--sample-rate', type=float, default=50.0, help='Data collection rate (Hz)'),
         click.option('--enable-servos', help='Comma delimited list of servo IDs to enable'),
         click.option('--disable-servos', help='Comma delimited list of servo IDs to disable')
     ]
@@ -110,15 +130,48 @@ def _handle_common_setup(ctx, kwargs, mode):
     ctx.obj['config'] = cfg
     ctx.obj['cli_args'] = {k: v for k, v in kwargs.items() if v is not None}
 
+
 def handle_test(ctx, kwargs, mode: str, test_type: str):
     """Common handler for all test commands"""
     _handle_common_setup(ctx, kwargs, mode=mode)
+    
+    # Handle random parameters for sin_sin test
+    if test_type == 'sin_sin' and kwargs.get('random'):
+        print("***************")
+       
+        # Set seed if provided
+        if kwargs.get('seed') is not None:
+            random.seed(kwargs['seed'])
+
+        kwargs['random'] = True 
+            
+        # Generate random frequencies and amplitudes within specified ranges
+        kwargs['freq1'] = random.uniform(kwargs['freq_min'], kwargs['freq_max'])
+        kwargs['freq2'] = random.uniform(kwargs['freq_min'], kwargs['freq_max'])
+        kwargs['amp1'] = random.uniform(kwargs['amp_min'], kwargs['amp_max'])
+        kwargs['amp2'] = random.uniform(kwargs['amp_min'], kwargs['amp_max'])
+        
+        # Print the randomly selected parameters
+        click.echo(f"\nRandom parameters selected:")
+        click.echo(f"freq1: {kwargs['freq1']:.2f} Hz")
+        click.echo(f"freq2: {kwargs['freq2']:.2f} Hz")
+        click.echo(f"amp1: {kwargs['amp1']:.2f}°")
+        click.echo(f"amp2: {kwargs['amp2']:.2f}°")
+     # Handle random parameters for step test
+    elif test_type == 'step' and kwargs.get('random'):
+        # Set seed if provided
+        if kwargs.get('seed') is not None:
+            random.seed(kwargs['seed'])
+        kwargs['random'] = True 
+
+        click.echo("\nRunning step test with random steps")
+        click.echo(f"Step size range: {kwargs['step_min']:.1f}° to {kwargs['step_max']:.1f}°")
+        click.echo(f"Maximum total deviation: ±{kwargs['max_total']:.1f}°")
+    
     ctx.obj['config'].setdefault('tune', {}).update(ctx.obj['cli_args'])
     ctx.obj['config']['tune']['test'] = test_type
     _validate_and_run(ctx.obj['config'])
 
-# Define the mode groups
-# ... existing code ...
 
 @cli.group()
 def compare():
@@ -149,6 +202,51 @@ def sim():
     - step: Run step response tests
     - chirp: Run frequency sweep tests"""
     pass
+
+@real.command(name='sin_sin')
+@create_mode_command('real')
+@create_test_command('sin_sin')
+@click.pass_context
+def real_sin_sin(ctx, **kwargs):
+    """Run sin_sin test on real hardware.
+    
+    Parameters:
+    --freq1: First sine frequency in Hz
+    --amp1: First sine amplitude in degrees
+    --freq2: Second sine frequency in Hz
+    --amp2: Second sine amplitude in degrees
+    --duration: Test duration in seconds"""
+    handle_test(ctx, kwargs, 'real', 'sin_sin')
+
+@sim.command(name='sin_sin')
+@create_mode_command('sim')
+@create_test_command('sin_sin')
+@click.pass_context
+def sim_sin_sin(ctx, **kwargs):
+    """Run sin_sin test in simulator.
+    
+    Parameters:
+    --freq1: First sine frequency in Hz
+    --amp1: First sine amplitude in degrees
+    --freq2: Second sine frequency in Hz
+    --amp2: Second sine amplitude in degrees
+    --duration: Test duration in seconds"""
+    handle_test(ctx, kwargs, 'sim', 'sin_sin')
+
+@compare.command(name='sin_sin')
+@create_mode_command('compare')
+@create_test_command('sin_sin')
+@click.pass_context
+def compare_sin_sin(ctx, **kwargs):
+    """Run sin_sin comparison test between real and simulated systems.
+    
+    Parameters:
+    --freq1: First sine frequency in Hz
+    --amp1: First sine amplitude in degrees
+    --freq2: Second sine frequency in Hz
+    --amp2: Second sine amplitude in degrees
+    --duration: Test duration in seconds"""
+    handle_test(ctx, kwargs, 'compare', 'sin_sin')
 
 # Add missing commands for each mode
 # Real mode commands
@@ -347,7 +445,7 @@ def sysid():
 @click.option('--length', type=float, help='Pendulum length (m)')  # Removed required=True
 # Test configuration
 @click.option('--trajectory', type=str, help='Trajectory type: lift_and_drop, sin_time_square, up_and_down, sin_sin, brutal, nothing')
-@click.option('--sample-rate', type=float, default=100.0, help='Data collection rate (Hz)')
+@click.option('--sample-rate', type=float, default=50.0, help='Data collection rate (Hz)')
 @click.pass_context
 def pendulum(ctx, **kwargs):
     """Run pendulum system identification experiment"""
@@ -423,7 +521,7 @@ def _validate_and_run_sysid(config: Dict):
             kp=cfg['kp'],
             max_torque=cfg.get('max_torque', 100.0),
             acceleration=0.0,  # Fixed for pendulum experiments
-            sample_rate=cfg.get('sample_rate', 100.0),
+            sample_rate=cfg.get('sample_rate', 50.0),
             vin=cfg.get('vin', 15.0),
             offset=cfg.get('offset', 0.0)
         )

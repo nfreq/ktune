@@ -14,6 +14,7 @@ from pykos import KOS
 from ktune.core.utils.datalog import DataLog
 from ktune.core.utils.plots import Plot
 from ktune.core.utils import metrics
+import random
 # Configure logging
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
 os.environ["PYTHONWARNINGS"] = "ignore"
@@ -60,10 +61,26 @@ class TuneConfig:
     freq: Optional[float] = None
     amp: Optional[float] = None
     duration: Optional[float] = None
+    # Sin_sin parameters
+    freq1: Optional[float] = None
+    amp1: Optional[float] = None
+    freq2: Optional[float] = None
+    amp2: Optional[float] = None
+    # Sin_Sin random
+    random: bool = False
+    random_reset: Optional[float] = None
+    freq_min: float = 0.1
+    freq_max: float = 1.0
+    amp_min: float = 5.0
+    amp_max: float = 25.0
+    seed: Optional[int] = None
     # Step parameters
     step_size: Optional[float] = None
     step_hold_time: Optional[float] = None
     step_count: Optional[int] = None
+    step_min: Optional[float] = None
+    step_max: Optional[float] = None
+    max_total: Optional[float] = None
     # Chirp parameters
     chirp_amp: Optional[float] = None
     chirp_init_freq: Optional[float] = None
@@ -161,6 +178,13 @@ class Tune:
             print(f"Duration: {self.config.duration}s")
             print(f"Total Duration: {self.config.duration + self.config.log_duration_pad}s")
         
+        elif self.config.test == "sin_sin":
+            print("\nSin-Sin Test Parameters:")
+            print(f"First Sine - Frequency: {self.config.freq1} Hz, Amplitude: {self.config.amp1}°")
+            print(f"Second Sine - Frequency: {self.config.freq2} Hz, Amplitude: {self.config.amp2}°")
+            print(f"Duration: {self.config.duration}s")
+            print(f"Total Duration: {self.config.duration + self.config.log_duration_pad}s")
+        
         elif self.config.test == "chirp":
             print("\nChirp Test Parameters:")
             print(f"Initial Frequency: {self.config.chirp_init_freq} Hz")
@@ -204,6 +228,8 @@ class Tune:
             
         if test_type == "sine":
             await self._run_sine_test()
+        elif test_type == "sin_sin":
+            await self._run_sin_sin_test()
         elif test_type == "step":
             await self._run_step_test()
         elif test_type == "chirp":
@@ -329,12 +355,43 @@ class Tune:
     async def _run_step_test(self):
         """Run step response test on both sim and real systems"""
         self._print_test_config()
+        
         # Construct step sequence
         vel = 0.0  # Default velocity limit
         steps = [(0.0, vel, self.config.step_hold_time)]
-        for _ in range(self.config.step_count):
-            steps.append((self.config.step_size, vel, self.config.step_hold_time))
-            steps.append((0.0, vel, self.config.step_hold_time))
+        
+        if not self.config.random:
+            # Original fixed step sequence
+            for _ in range(self.config.step_count):
+                steps.append((self.config.step_size, vel, self.config.step_hold_time))
+                steps.append((0.0, vel, self.config.step_hold_time))
+        else:
+            # Initialize for random steps
+            current_total = 0.0
+            print("\nGenerating random step sequence:")
+            
+            for step_num in range(self.config.step_count):
+                # Generate random step size
+                step_size = random.uniform(self.config.step_min, self.config.step_max)
+                direction = random.choice([-1, 1])
+                
+                # Check if we need to force direction to stay within limits
+                proposed_total = current_total + (step_size * direction)
+                if abs(proposed_total) > self.config.max_total:
+                    direction = -1 if proposed_total > 0 else 1
+                
+                final_step = step_size * direction
+                current_total += final_step
+                
+                # Print step info
+                direction_str = "up" if final_step > 0 else "down"
+                print(f"Step {step_num + 1}: {abs(final_step):.2f}° ({direction_str})")
+                
+                # Add step to sequence
+                steps.append((current_total, vel, self.config.step_hold_time))
+                steps.append((current_total, vel, self.config.step_hold_time))
+            
+            print(f"Final position will be: {current_total:.2f}° from start")
 
         # Calculate total duration including padding
         total_duration = (sum(step[2] for step in steps) + 
@@ -495,6 +552,171 @@ class Tune:
             )
             print(f"Real RMS Error: {real_error:.3f}°")
 
+
+    async def _run_sin_sin_test(self):
+        """Run sin_sin wave test (superposition of two sine waves) on both sim and real systems"""
+        self._print_test_config()
+
+        if self.config.random:
+            print("Running sin_sin test with random parameters")
+            if self.config.seed is not None:
+                random.seed(self.config.seed)
+
+            def generate_random_params():
+                return {
+                    'freq1': random.uniform(self.config.freq_min, self.config.freq_max),
+                    'freq2': random.uniform(self.config.freq_min, self.config.freq_max),
+                    'amp1': random.uniform(self.config.amp_min, self.config.amp_max),
+                    'amp2': random.uniform(self.config.amp_min, self.config.amp_max)
+                }
+            
+            # Generate initial random parameters
+            random_params = generate_random_params()
+            print("\nInitial random parameters:")
+            print(f"freq1: {random_params['freq1']:.2f} Hz")
+            print(f"freq2: {random_params['freq2']:.2f} Hz")
+            print(f"amp1: {random_params['amp1']:.2f}°")
+            print(f"amp2: {random_params['amp2']:.2f}°")
+        else:
+            random_params = {
+                'freq1': self.config.freq1,
+                'freq2': self.config.freq2,
+                'amp1': self.config.amp1,
+                'amp2': self.config.amp2
+            }
+
+        # Calculate total duration including padding
+        total_duration = self.config.duration + self.config.log_duration_pad
+
+        # Configure actuators based on mode
+        kos_configs = []
+        if self.mode in ['compare', 'sim']:
+            kos_configs.append((self.sim_kos, False))
+        if self.mode in ['compare', 'real']:
+            kos_configs.append((self.real_kos, True))
+
+        # Configure each active KOS instance
+        for kos, is_real in kos_configs:
+            # Select gains based on system type
+            if is_real:
+                kp, kd, ki = (self.config.kp, self.config.kd, self.config.ki)
+            else:
+                kp, kd, ki = (self.config.sim_kp, self.config.sim_kd, 0.0)
+
+            await kos.actuator.configure_actuator(
+                actuator_id=self.config.actuator_id,
+                kp=kp, kd=kd, ki=ki,
+                acceleration=self.config.acceleration,
+                max_torque=self.config.max_torque,
+                torque_enabled=not self.config.torque_off
+            )
+
+        # Move to start position and wait for settling
+        await self._move_to_start_position(kos_configs)
+
+        # seconds to transition between parameter sets
+        transition_time = 3
+
+        # Start test
+        start_time = time.time()
+        current_time = 0.0
+        last_reset_time = 0.0
+        old_params = None
+        transition_start = 0.0
+        is_transitioning = False
+        current_params = random_params
+        
+        while current_time < total_duration:
+            current_time = time.time() - start_time
+            if (self.config.random and self.config.random_reset is not None and 
+                current_time - last_reset_time >= self.config.random_reset):
+                old_params = random_params.copy()
+                random_params = generate_random_params()
+                last_reset_time = current_time
+                transition_start = current_time
+                is_transitioning = True
+                print(f"\nNew random parameters at t={current_time:.1f}s:")
+                print(f"freq1: {random_params['freq1']:.2f} Hz")
+                print(f"freq2: {random_params['freq2']:.2f} Hz")
+                print(f"amp1: {random_params['amp1']:.2f}°")
+                print(f"amp2: {random_params['amp2']:.2f}°")
+
+
+            if is_transitioning and old_params is not None:
+            # Calculate transition progress (0 to 1)
+                progress = min((current_time - transition_start) / transition_time, 1.0)
+                
+                # Use smooth step function for transition
+                blend = progress * progress * (3 - 2 * progress)  # Smooth step function
+                
+                # Blend parameters
+                current_params = {
+                    'freq1': old_params['freq1'] + (random_params['freq1'] - old_params['freq1']) * blend,
+                    'freq2': old_params['freq2'] + (random_params['freq2'] - old_params['freq2']) * blend,
+                    'amp1': old_params['amp1'] + (random_params['amp1'] - old_params['amp1']) * blend,
+                    'amp2': old_params['amp2'] + (random_params['amp2'] - old_params['amp2']) * blend
+                }
+                
+                # End transition when complete
+                if progress >= 1.0:
+                    is_transitioning = False
+            else:
+                current_params = random_params
+
+            if current_time <= self.config.duration:
+                # Calculate superposition of two sine waves using current_params
+                omega1 = 2.0 * math.pi * current_params['freq1']
+                omega2 = 2.0 * math.pi * current_params['freq2']
+                phase1 = omega1 * current_time
+                phase2 = omega2 * current_time
+                
+                target_pos = (current_params['amp1'] * math.sin(phase1) +
+                            current_params['amp2'] * math.sin(phase2) +
+                            self.config.start_pos)
+                
+                target_vel = (current_params['amp1'] * omega1 * math.cos(phase1) +
+                            current_params['amp2'] * omega2 * math.cos(phase2))
+
+                # Command active systems
+                for kos, is_real in kos_configs:
+                    data_dict = self.real_data if is_real else self.sim_data
+                    # Send command with both position and velocity
+                    await kos.actuator.command_actuators([{
+                        'actuator_id': self.config.actuator_id,
+                        'position': target_pos,
+                    }])
+                    
+                    # Log command
+                    data_dict["cmd_time"].append(current_time)
+                    data_dict["cmd_pos"].append(target_pos)
+                    data_dict["cmd_vel"].append(target_vel)
+
+                    # Get and log state
+                    response = await kos.actuator.get_actuators_state(
+                        [self.config.actuator_id]
+                    )
+                    self._log_actuator_state(response, data_dict, current_time)
+
+            await asyncio.sleep(1.0 / self.config.sample_rate)
+
+        # Calculate tracking metrics only for active systems
+        if self.mode in ['compare', 'sim']:
+            sim_error = metrics.compute_tracking_error(
+                self.sim_data["cmd_time"],
+                self.sim_data["cmd_pos"],
+                self.sim_data["time"],
+                self.sim_data["position"]
+            )
+            print(f"Sim RMS Error: {sim_error:.3f}°")
+
+        if self.mode in ['compare', 'real']:
+            real_error = metrics.compute_tracking_error(
+                self.real_data["cmd_time"],
+                self.real_data["cmd_pos"],
+                self.real_data["time"],
+                self.real_data["position"]
+            )
+            print(f"Real RMS Error: {real_error:.3f}°")
     async def _run_chirp_test(self):
         """Run chirp test on both sim and real systems"""
         self._print_test_config()
